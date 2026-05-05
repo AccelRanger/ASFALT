@@ -26,45 +26,25 @@
 
 class MuxReader {
 public:
-    // Constructor – pass your pin numbers (or use the defaults)
     MuxReader(uint8_t pinA   = 8,
               uint8_t pinB   = 10,
               uint8_t pinC   = 11,
               uint8_t pinD   = 12,
               uint8_t sigPin = A0);
 
-    // Call once in setup()
     void begin();
 
-    // ── Primary functions ─────────────────────────────────────
-
-    // Returns SUM of all 16 channel ADC readings.
-    // Range: 0 to 16368  (16 × 1023)
     int readSum();
 
-    // Returns weighted line position: 0 (far left) to 15000 (far right)
-    // 7500 = line is exactly centered on the array
-    // Returns MUX_NO_LINE (-1) if total signal < noLineThreshold
     int readPosition();
-
-    // ── Utility functions ─────────────────────────────────────
-
-    // Read one raw channel (0-15) → ADC value 0-1023
     int  readChannel(uint8_t channel);
 
-    // Fill results[16] with all raw ADC values
     void readAll(int results[MUX_CHANNELS]);
 
-    // Invert readings: set true when black line = low ADC
-    // so that black contributes MORE to sum/position. Default = false.
     void setInvert(bool invert);
 
-    // Minimum summed ADC before readPosition() returns MUX_NO_LINE.
-    // Default = 50. Raise if you get false detections on empty track.
     void setNoLineThreshold(int threshold);
 
-    // Microseconds between channel-select and ADC sample.
-    // Raise to 50 if channels bleed into each other. Default = 10.
     void setSettleTime(uint16_t microseconds);
 
 private:
