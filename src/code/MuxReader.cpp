@@ -1,8 +1,5 @@
 #include "MuxReader.h"
 
-// ──────────────────────────────────────────────────────────────
-//  Constructor
-// ──────────────────────────────────────────────────────────────
 MuxReader::MuxReader(uint8_t pinA,
                      uint8_t pinB,
                      uint8_t pinC,
@@ -19,9 +16,7 @@ MuxReader::MuxReader(uint8_t pinA,
     _noLineThreshold  = 50;
 }
 
-// ──────────────────────────────────────────────────────────────
-//  begin()
-// ──────────────────────────────────────────────────────────────
+//  begin() (init)
 void MuxReader::begin()
 {
     pinMode(_pinA,   OUTPUT);
@@ -32,10 +27,7 @@ void MuxReader::begin()
     _selectChannel(0);
 }
 
-// ──────────────────────────────────────────────────────────────
-//  readSum()
-//  Returns the plain sum of all 16 ADC readings (0–16368).
-// ──────────────────────────────────────────────────────────────
+//  readSum() (0–16368).
 int MuxReader::readSum()
 {
     int total = 0;
@@ -76,9 +68,7 @@ int MuxReader::readPosition()
     return (int)(weightedSum / totalSum);   // 0 … 15000
 }
 
-// ──────────────────────────────────────────────────────────────
 //  readChannel(ch)
-// ──────────────────────────────────────────────────────────────
 int MuxReader::readChannel(uint8_t channel)
 {
     if (channel >= MUX_CHANNELS) return 0;
@@ -87,9 +77,7 @@ int MuxReader::readChannel(uint8_t channel)
     return analogRead(_sigPin);
 }
 
-// ──────────────────────────────────────────────────────────────
 //  readAll(results)
-// ──────────────────────────────────────────────────────────────
 void MuxReader::readAll(int results[MUX_CHANNELS])
 {
     for (uint8_t ch = 0; ch < MUX_CHANNELS; ch++) {
@@ -97,9 +85,7 @@ void MuxReader::readAll(int results[MUX_CHANNELS])
     }
 }
 
-// ──────────────────────────────────────────────────────────────
 //  Setters
-// ──────────────────────────────────────────────────────────────
 void MuxReader::setInvert(bool invert)
 {
     _invert = invert;
@@ -115,13 +101,12 @@ void MuxReader::setSettleTime(uint16_t microseconds)
     _settleTime = microseconds;
 }
 
-// ──────────────────────────────────────────────────────────────
+
 //  _selectChannel
-// ──────────────────────────────────────────────────────────────
 void MuxReader::_selectChannel(uint8_t channel)
 {
-    digitalWrite(_pinA, (channel >> 0) & 0x01);  // S0
-    digitalWrite(_pinB, (channel >> 1) & 0x01);  // S1
-    digitalWrite(_pinC, (channel >> 2) & 0x01);  // S2
-    digitalWrite(_pinD, (channel >> 3) & 0x01);  // S3
+    digitalWrite(_pinA, (channel >> 0) & 0x01); 
+    digitalWrite(_pinB, (channel >> 1) & 0x01);  
+    digitalWrite(_pinC, (channel >> 2) & 0x01);  
+    digitalWrite(_pinD, (channel >> 3) & 0x01); 
 }
