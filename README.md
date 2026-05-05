@@ -73,30 +73,7 @@ ASFALT/
 
 ---
 
-## Getting Started
-
-### Requirements
-
-- [Arduino IDE](https://www.arduino.cc/en/software) 1.8+ or Arduino CLI
-- Arduino Nano board package (`ATmega328P`)
-- No external libraries needed — `MuxReader` is included in the repo
-
-### Upload
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/AccelRanger/ASFALT.git
-   ```
-2. Open `src/code/ASFALT_LNF.ino` in Arduino IDE.
-3. Ensure `MuxReader.h` and `MuxReader.cpp` are in the same folder.
-4. Select **Arduino Nano** and the correct COM port.
-5. Upload.
-
----
-
 ## Tuning Guide
-
-All tunable constants are at the top of `ASFALT_LNF.ino`:
 
 | Constant | Default | Effect |
 |---|---|---|
@@ -141,32 +118,7 @@ int pos   = mux.readPosition(); // 0–15000, center = 7500, or MUX_NO_LINE
 | `setSettleTime(µs)` | 10 | Delay between channel select and ADC read |
 | `setNoLineThreshold(int)` | 50 | Minimum sum before `readPosition()` returns `MUX_NO_LINE` |
 
----
 
-## PCB
-
-KiCad project files are in `src/PCB/`. The main schematic is also available as a PDF at `src/img/AsfaltMainSchematic.pdf`.
-
-| Board | Path | Notes |
-|---|---|---|
-| Sensor board V1 | `PCB/LNF_SENSOR_V1/` | Original 16-sensor mux board |
-| Sensor board V2 | `PCB/LNF_SENSOR_V2/` | Revised layout |
-| Main board V2 | `PCB/MAIN_V2/` | Controller + driver integration |
-
----
-
-## 3D Printing
-
-All printable parts are in `src/3dPrint/`. Standard PLA works fine.
-
-| File | Description |
-|---|---|
-| `motorMount/v1/ASFALT_LINE_FOLLOWER_MOTOR_MOUNT.stl` | Motor mount V1 |
-| `motorMount/v2/ASLNF_MOTOR_HOLDER_MAIN.stl` | Motor mount V2 — main body |
-| `motorMount/v2/ASLNF_MOTOR_HOLDER_TOP.stl` | Motor mount V2 — top clamp |
-| `wheels/LEGO_30x04TIRE_TO_DSHAFT.stl` | Adapter for LEGO 30×4 tires on D-shaft motors |
-
----
 
 ## License
 
