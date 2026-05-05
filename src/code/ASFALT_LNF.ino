@@ -1,252 +1,122 @@
-// ════════════════════════════════════════════════════════════════
-//  LINE FOLLOWER  –  Arduino Nano (ATmega328P)
-//  Sensor  : 16× TCRT5000 in U-shape via analog mux (MuxReader)
-//  Driver  : PWM H-bridge
-//
-//  Sensor layout (U-shape):
-//    LEFT  side  : CH0  – CH3   (4 sensors, point left)
-//    FRONT bar   : CH4  – CH11  (8 sensors, point forward)
-//    RIGHT side  : CH12 – CH15  (4 sensors, point right)
-//
-//  Motor wiring:
-//    LEFT  motor → 1A : D3  |  1B : D5
-//    RIGHT motor → 2A : D6  |  2B : D9
-//
-//  Mux wiring:
-//    PORT A (S0) → D8  |  PORT B (S1) → D10
-//    PORT C (S2) → D11 |  PORT D (S3) → D12
-//    OUT (SIG)   → A0
-//
-// ════════════════════════════════════════════════════════════════
-//  TUNING GUIDE
-//  ─────────────────────────────────────────────────────────────
-//  BASE_SPEED      Start at 100. Raise once steering is correct.
-//
-//  TURN_SPEED      Speed of the INNER wheel during a sharp turn.
-//                  Lower = tighter turn. Try 0–40 to start.
-//
-//  KP_FRONT        Front bar proportional gain. Raise until the
-//                  robot oscillates on a straight, then back off ~20%.
-//                  Start: 0.05
-//
-//  KD_FRONT        Damps front bar oscillation. Raise if it wiggles.
-//                  Start: 0.15
-//
-//  KP_SIDE         How hard the side sensors trigger a sharp turn.
-//                  Raise if the robot misses corners.
-//                  Start: 60 (added directly as correction units)
-//
-//  SIDE_THRESHOLD  Min ADC sum on one side-arm before it triggers.
-//                  Lower if corners are missed, raise to ignore noise.
-//                  Start: 200
-//
-//  FRONT_THRESHOLD Min ADC sum on front bar to count as line seen.
-//                  Start: 300
-// ════════════════════════════════════════════════════════════════
+// ============================================================
+//  16-channel IR array line follower — PID + adaptive speed
+//  FIXED: left motor pins swapped, sensor polarity inverted
+// ============================================================
 
-#include "MuxReader.h"
-
-// ── Mux pins ──────────────────────────────────────────────────────
+// --- MUX ---
 #define MUX_PIN_A    8
 #define MUX_PIN_B   10
 #define MUX_PIN_C   11
 #define MUX_PIN_D   12
 #define MUX_SIG_PIN A0
 
-// ── Motor pins ────────────────────────────────────────────────────
-#define LEFT_A   3
-#define LEFT_B   5
-#define RIGHT_A  6
-#define RIGHT_B  9
+// --- Motors (LEFT_A/B swapped to fix reverse) ---
+#define LEFT_A   5
+#define LEFT_B   3
+#define RIGHT_A  9
+#define RIGHT_B  6
 
-// ── Speed settings ────────────────────────────────────────────────
-#define BASE_SPEED   100    // forward cruise speed (0-255)
-#define TURN_SPEED   20     // inner wheel speed during sharp corner turn
-#define MAX_SPEED    220    // motor ceiling
+// --- Sensor config ---
+#define NUM_SENSORS       16
+#define SENSOR_THRESHOLD  500   // below 500 = black line (inverted sensors)
 
-// ── PID gains for the front 8-sensor bar ─────────────────────────
-#define KP_FRONT   0.05f
-#define KI_FRONT   0.0f
-#define KD_FRONT   0.15f
+// --- Speed config ---
+#define BASE_SPEED          100
+#define ERROR_ACCEL_SPEED   120
+#define TURN_SPEED          80
+#define ERROR_ACCEL_THRESH  1500  // tune this to your track width
 
-// ── Side sensor correction strength ──────────────────────────────
-// When a side arm detects the line, this value overrides the PID
-// and forces a sharp turn. Higher = more aggressive corner turning.
-#define KP_SIDE    60
+// --- PID tuning --- start here, tune on track
+float Kp = 0.03f;
+float Ki = 0.0f;
+float Kd = 0.4f;
 
-// ── Detection thresholds (ADC sum per sensor group) ──────────────
-#define SIDE_THRESHOLD   200   // min sum on left/right arm to trigger
-#define FRONT_THRESHOLD  300   // min sum on front bar to count as on-line
+// --- PID state ---
+float lastError = 0;
+float integral  = 0;
 
-// ── Sensor channel layout ─────────────────────────────────────────
-#define LEFT_CH_START    0
-#define LEFT_CH_END      3
-#define FRONT_CH_START   4
-#define FRONT_CH_END     11
-#define RIGHT_CH_START   12
-#define RIGHT_CH_END     15
-
-// ════════════════════════════════════════════════════════════════
-
-MuxReader mux(MUX_PIN_A, MUX_PIN_B, MUX_PIN_C, MUX_PIN_D, MUX_SIG_PIN);
-
-// Raw channel buffer
-int ch[16];
-
-// PID state (front bar only)
-float pidIntegral  = 0.0f;
-float pidLastError = 0.0f;
-unsigned long lastTime = 0;
-
-// ── Motor helpers ─────────────────────────────────────────────────
-void motorLeft(int speed) {
-    speed = constrain(speed, -255, 255);
-    if (speed >= 0) { analogWrite(LEFT_A, speed);   analogWrite(LEFT_B, 0);      }
-    else            { analogWrite(LEFT_A, 0);        analogWrite(LEFT_B, -speed); }
+// ============================================================
+void selectMuxChannel(uint8_t ch) {
+  digitalWrite(MUX_PIN_A, (ch >> 0) & 1);
+  digitalWrite(MUX_PIN_B, (ch >> 1) & 1);
+  digitalWrite(MUX_PIN_C, (ch >> 2) & 1);
+  digitalWrite(MUX_PIN_D, (ch >> 3) & 1);
 }
 
-void motorRight(int speed) {
-    // Right motor physically reversed – A/B swapped
-    speed = constrain(speed, -255, 255);
-    if (speed >= 0) { analogWrite(RIGHT_A, 0);       analogWrite(RIGHT_B, speed);  }
-    else            { analogWrite(RIGHT_A, -speed);  analogWrite(RIGHT_B, 0);      }
-}
+// ============================================================
+//  Read sensors — INVERTED: low value = on black line
+// ============================================================
+float readSensors() {
+  long weightedSum = 0;
+  long activeSum   = 0;
+  bool anyActive   = false;
 
-void stopMotors() {
-    analogWrite(LEFT_A, 0); analogWrite(LEFT_B, 0);
-    analogWrite(RIGHT_A, 0); analogWrite(RIGHT_B, 0);
-}
+  for (uint8_t i = 0; i < NUM_SENSORS; i++) {
+    selectMuxChannel(i);
+    delay(2);                        // wait for MUX to switch and signal to settle
+    int val = analogRead(MUX_SIG_PIN);
 
-// ── Sensor helpers ────────────────────────────────────────────────
-// Sum ADC values across a channel range (inverted: black = high)
-int sensorSum(int fromCh, int toCh) {
-    int s = 0;
-    for (int i = fromCh; i <= toCh; i++) {
-        s += (1023 - ch[i]);   // invert: black line = high value
+    if (val < SENSOR_THRESHOLD) {
+      int strength = SENSOR_THRESHOLD - val;
+      long weight  = (long)i * 1000;
+      weightedSum += weight * strength;
+      activeSum   += strength;
+      anyActive    = true;
     }
-    return s;
+  }
+
+  if (!anyActive) return lastError;
+
+  float position = (float)weightedSum / (float)activeSum;
+  return position - 7500.0f;
 }
 
-// Weighted position across a channel range → 0 to (range*1000)
-// Center = (range/2) * 1000
-int sensorPosition(int fromCh, int toCh) {
-    long weighted = 0;
-    long total    = 0;
-    for (int i = fromCh; i <= toCh; i++) {
-        int val = (1023 - ch[i]);
-        weighted += (long)(i - fromCh) * 1000L * val;
-        total    += val;
-    }
-    if (total < 1) return ((toCh - fromCh) * 1000) / 2;  // default center
-    return (int)(weighted / total);
+// ============================================================
+void driveLeft(int speed) {
+  speed = constrain(speed, -255, 255);
+  if (speed >= 0) { analogWrite(LEFT_A, speed); analogWrite(LEFT_B, 0); }
+  else            { analogWrite(LEFT_A, 0);     analogWrite(LEFT_B, -speed); }
 }
 
-// ════════════════════════════════════════════════════════════════
+void driveRight(int speed) {
+  speed = constrain(speed, -255, 255);
+  if (speed >= 0) { analogWrite(RIGHT_A, speed); analogWrite(RIGHT_B, 0); }
+  else            { analogWrite(RIGHT_A, 0);      analogWrite(RIGHT_B, -speed); }
+}
+
+// ============================================================
 void setup() {
-    Serial.begin(9600);
+  pinMode(MUX_PIN_A, OUTPUT);
+  pinMode(MUX_PIN_B, OUTPUT);
+  pinMode(MUX_PIN_C, OUTPUT);
+  pinMode(MUX_PIN_D, OUTPUT);
 
-    pinMode(LEFT_A,  OUTPUT); pinMode(LEFT_B,  OUTPUT);
-    pinMode(RIGHT_A, OUTPUT); pinMode(RIGHT_B, OUTPUT);
-    stopMotors();
+  pinMode(LEFT_A,  OUTPUT);
+  pinMode(LEFT_B,  OUTPUT);
+  pinMode(RIGHT_A, OUTPUT);
+  pinMode(RIGHT_B, OUTPUT);
 
-    mux.begin();
-    mux.setInvert(false);   // we invert manually per-group above
-    mux.setSettleTime(10);
-
-    // ── Startup: forward 0.5s → backward 0.5s ────────────────────
-    Serial.println("Startup: forward...");
-    motorLeft(BASE_SPEED); motorRight(BASE_SPEED);
-    delay(500);
-    stopMotors(); delay(100);
-
-    Serial.println("Startup: backward...");
-    motorLeft(-BASE_SPEED); motorRight(-BASE_SPEED);
-    delay(500);
-    stopMotors(); delay(100);
-
-    Serial.println("Line follower started.");
-    lastTime = millis();
+  Serial.begin(115200);
 }
 
-// ════════════════════════════════════════════════════════════════
+// ============================================================
 void loop() {
+  float error      = readSensors();
+  integral        += error;
+  integral         = constrain(integral, -5000, 5000);
+  float derivative = error - lastError;
+  float correction = Kp * error + Ki * integral + Kd * derivative;
+  lastError        = error;
 
-    // ── 1. Read all 16 channels into buffer ──────────────────────
-    mux.readAll(ch);
+  // Adaptive speed: small error = fast, large error = slow
+  float t         = constrain(fabs(error) / ERROR_ACCEL_THRESH, 0.0f, 1.0f);
+  int   baseSpeed = (int)(ERROR_ACCEL_SPEED - t * (ERROR_ACCEL_SPEED - TURN_SPEED));
 
-    // ── 2. Calculate sums per zone ───────────────────────────────
-    int sumLeft  = sensorSum(LEFT_CH_START,  LEFT_CH_END);    // 0-4092
-    int sumFront = sensorSum(FRONT_CH_START, FRONT_CH_END);   // 0-8184
-    int sumRight = sensorSum(RIGHT_CH_START, RIGHT_CH_END);   // 0-4092
+  driveLeft(baseSpeed  - (int)correction);
+  driveRight(baseSpeed + (int)correction);
 
-    bool lineLeft  = (sumLeft  > SIDE_THRESHOLD);
-    bool lineFront = (sumFront > FRONT_THRESHOLD);
-    bool lineRight = (sumRight > SIDE_THRESHOLD);
-
-    // ── 3. No line anywhere → stop ───────────────────────────────
-    if (!lineLeft && !lineFront && !lineRight) {
-        stopMotors();
-        pidIntegral = 0.0f; pidLastError = 0.0f;
-        Serial.println("NO LINE");
-        return;
-    }
-
-    // ── 4. Compute dt for PID ────────────────────────────────────
-    unsigned long now = millis();
-    float dt = (now - lastTime) / 1000.0f;
-    if (dt <= 0.0f) dt = 0.001f;
-    lastTime = now;
-
-    // ── 5. Determine correction ───────────────────────────────────
-    //
-    //  Priority order:
-    //    A) Side sensors only (sharp corner) → hard turn
-    //    B) Side + front together (entering corner) → blended turn
-    //    C) Front bar only (straight / gentle curve) → PID
-    //
-    float correction = 0.0f;
-
-    if (lineLeft && !lineRight) {
-        // Line coming from left side → sharp left turn
-        // Scale by how many left sensors are active
-        float sideStrength = (float)sumLeft / (4 * 1023.0f);
-        correction = -(KP_SIDE + KP_SIDE * sideStrength);
-
-    } else if (lineRight && !lineLeft) {
-        // Line coming from right side → sharp right turn
-        float sideStrength = (float)sumRight / (4 * 1023.0f);
-        correction = +(KP_SIDE + KP_SIDE * sideStrength);
-
-    } else if (lineFront) {
-        // Front bar PID – weighted position of line on front bar
-        // Front bar center = channel 3.5 relative → position 3500
-        int frontPos   = sensorPosition(FRONT_CH_START, FRONT_CH_END);
-        float error    = (float)(frontPos - 3500);  // 3500 = center of 8 sensors
-
-        pidIntegral   += error * dt;
-        pidIntegral    = constrain(pidIntegral, -3000.0f, 3000.0f);
-        float deriv    = (error - pidLastError) / dt;
-        pidLastError   = error;
-
-        correction = KP_FRONT * error + KI_FRONT * pidIntegral + KD_FRONT * deriv;
-
-    } else {
-        // Only side sensors, both active (straddle) → go straight
-        correction = 0.0f;
-    }
-
-    // ── 6. Apply correction to motors ────────────────────────────
-    int leftSpeed  = constrain((int)(BASE_SPEED + correction), TURN_SPEED, MAX_SPEED);
-    int rightSpeed = constrain((int)(BASE_SPEED - correction), TURN_SPEED, MAX_SPEED);
-
-    motorLeft(leftSpeed);
-    motorRight(rightSpeed);
-
-    // ── 7. Debug ─────────────────────────────────────────────────
-    Serial.print("L:"); Serial.print(sumLeft);
-    Serial.print(" F:"); Serial.print(sumFront);
-    Serial.print(" R:"); Serial.print(sumRight);
-    Serial.print(" | Cor:"); Serial.print((int)correction);
-    Serial.print(" ML:"); Serial.print(leftSpeed);
-    Serial.print(" MR:"); Serial.println(rightSpeed);
+  // Uncomment to tune PID over serial:
+  // Serial.print("err:"); Serial.print(error);
+  // Serial.print(" cor:"); Serial.print(correction);
+  // Serial.print(" spd:"); Serial.println(baseSpeed);
 }
