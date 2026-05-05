@@ -1,4 +1,4 @@
-// AccelRanger
+//AccelRanger
 
 #define MUX_PIN_A    8
 #define MUX_PIN_B   10
@@ -37,11 +37,10 @@ void setup() {
   pinMode(RIGHT_A, OUTPUT);
   pinMode(RIGHT_B, OUTPUT);
 
-  stopMotors(); // ensure motors are off on boot
+  stopMotors();
 
-  Serial.begin(115200);
-  Serial.println("=== DIAGNOSTIC START ===");
-  Serial.println("Commands: 's' = sensors, 'f' = forward, 'l' = left spin, 'r' = right spin, 'x' = stop");
+  Serial.begin(9600);
+  Serial.println("=== MCU START ===");
 }
 
 void loop() {
@@ -52,14 +51,14 @@ void loop() {
     Serial.println("--- Sensor raw values ---");
     for (uint8_t i = 0; i < NUM_SENSORS; i++) {
       selectMuxChannel(i);
-      delay(2);
+      delay(5); // mux switching time
       int val = analogRead(MUX_SIG_PIN);
 
       Serial.print("S"); Serial.print(i); Serial.print(":");
       Serial.print(val);
 
-      if (val < SENSOR_THRESHOLD) Serial.print("(LINE)");
-      else                        Serial.print("(    )");
+      if (val < SENSOR_THRESHOLD) Serial.print("( 1 )");
+      else                        Serial.print("( 0 )");
 
       Serial.print("  ");
       if (i == 7) Serial.println();
@@ -67,23 +66,23 @@ void loop() {
     Serial.println();
     Serial.println();
 
-  } else if (cmd == 'f') {
-    Serial.println("FORWARD 80 — both wheels should spin forward");
+  } else if (cmd == 'l') {
     analogWrite(LEFT_A,  80); analogWrite(LEFT_B,  0);
     analogWrite(RIGHT_A, 80); analogWrite(RIGHT_B, 0);
 
-  } else if (cmd == 'l') {
-    Serial.println("LEFT SPIN — robot should rotate left");
+  } else if (cmd == 'r') {
+    analogWrite(LEFT_A,  0); analogWrite(LEFT_B,  80);
+    analogWrite(RIGHT_A, 0); analogWrite(RIGHT_B, 80);
+
+  } else if (cmd == 'b') { //backwards
     analogWrite(LEFT_A,  0);  analogWrite(LEFT_B,  80);
     analogWrite(RIGHT_A, 80); analogWrite(RIGHT_B, 0);
 
-  } else if (cmd == 'r') {
-    Serial.println("RIGHT SPIN — robot should rotate right");
+  } else if (cmd == 'f') {
     analogWrite(LEFT_A,  80); analogWrite(LEFT_B,  0);
     analogWrite(RIGHT_A, 0);  analogWrite(RIGHT_B, 80);
 
   } else if (cmd == 'x') {
-    Serial.println("STOP");
     stopMotors();
   }
 }
