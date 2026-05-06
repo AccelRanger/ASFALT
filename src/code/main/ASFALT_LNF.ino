@@ -1,8 +1,3 @@
-// ============================================================
-//  16-channel IR array line follower — PID + adaptive speed
-//  FIXED: left motor pins swapped, sensor polarity inverted
-// ============================================================
-
 // --- MUX ---
 #define MUX_PIN_A    8
 #define MUX_PIN_B   10
@@ -18,15 +13,14 @@
 
 // --- Sensor config ---
 #define NUM_SENSORS       16
-#define SENSOR_THRESHOLD  500   // below 500 = black line (inverted sensors)
+#define SENSOR_THRESHOLD  500
 
 // --- Speed config ---
 #define BASE_SPEED          100
 #define ERROR_ACCEL_SPEED   120
 #define TURN_SPEED          80
-#define ERROR_ACCEL_THRESH  1500  // tune this to your track width
+#define ERROR_ACCEL_THRESH  1500
 
-// --- PID tuning --- start here, tune on track
 float Kp = 0.03f;
 float Ki = 0.0f;
 float Kd = 0.4f;
@@ -43,9 +37,6 @@ void selectMuxChannel(uint8_t ch) {
   digitalWrite(MUX_PIN_D, (ch >> 3) & 1);
 }
 
-// ============================================================
-//  Read sensors — INVERTED: low value = on black line
-// ============================================================
 float readSensors() {
   long weightedSum = 0;
   long activeSum   = 0;
