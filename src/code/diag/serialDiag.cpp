@@ -51,7 +51,7 @@ void loop() {
     Serial.println("--- Sensor raw values ---");
     for (uint8_t i = 0; i < NUM_SENSORS; i++) {
       selectMuxChannel(i);
-      delay(5); // mux switching time
+      delay(20); // mux switching time
       int val = analogRead(MUX_SIG_PIN);
 
       Serial.print("S"); Serial.print(i); Serial.print(":");
