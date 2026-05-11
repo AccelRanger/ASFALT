@@ -1,7 +1,7 @@
 #define PIN_S0  12
 #define PIN_S1  11
 #define PIN_S2  10
-#define PIN_S3   8
+#define PIN_S3  8
 #define PIN_COM A0
 
 #define NUM_CHANNELS 16
@@ -57,13 +57,12 @@ void printReadings() {
 }
 
 void setup() {
+  Serial.begin(9600);
   Serial.println("Start MCU");
   pinMode(PIN_S0, OUTPUT);
   pinMode(PIN_S1, OUTPUT);
   pinMode(PIN_S2, OUTPUT);
   pinMode(PIN_S3, OUTPUT);
-
-  Serial.begin(9600);
 }
 
 void loop() {
