@@ -24,7 +24,7 @@
 
 // SPEED
 #define BASE_SPEED   100
-#define MAX_SPEED    220
+#define MAX_SPEED    200
 #define MIN_SPEED      0
 
 // PID CONFIG
