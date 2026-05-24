@@ -1,40 +1,67 @@
 #include "MuxSensor.h"
 
-// ── Pins ──────────────────────────────────────────────────────────────────────
+// ── Tuning ───────────────────────────────────────────────────────────────────
+#define BASE_SPEED            160   // cruise speed (0-255)
+#define MAX_SPEED             255   // absolute motor cap
+#define MIN_DRIVE_SPEED        60   // minimum forward speed (prevents stall)
+#define REVERSE_SPEED          80   // speed used when spinning to recover line
+
+// PID gains  (tune KP first, then KD, then KI last)
+#define KP                   10.0f
+#define KI                    0.04f
+#define KD                    6.0f
+#define INTEGRAL_CLAMP       60.0f  // prevents integral windup
+
+// Dynamic speed: BASE_SPEED is scaled down when |error| is large
+// effectiveBase = BASE_SPEED - SPEED_REDUCE_K * |error|  (clamped to MIN_DRIVE_SPEED)
+#define SPEED_REDUCE_K         4.0f
+
+// Line-lost recovery: spin for up to this long before giving up
+#define LINE_LOST_TIMEOUT_MS  600UL
+
+#define SERIAL_DEBUG           1
+
+// ── Pins ─────────────────────────────────────────────────────────────────────
 #define PIN_S0   12
 #define PIN_S1   11
 #define PIN_S2   10
 #define PIN_S3    8
 #define PIN_COM  A0
 
-#define LEFT_A    5
-#define LEFT_B    3
-#define RIGHT_A   6 
-#define RIGHT_B   9 
-
-// ── Tuning ────────────────────────────────────────────────────────────────────
-#define BASE_SPEED      130
-
-#define KP               8
-
-#define MIN_TURN_SPEED  30
-
-#define LINE_LOST_TIMEOUT_MS  300UL
-
-#define SENSOR_CENTRE  (MUX_NUM_CHANNELS - 1) * 2 / 2   // 15
+// Motor pins: each motor has a FORWARD and BACKWARD PWM pin
+// Speed the motor forward  → analogWrite(FWD, speed), analogWrite(BWD, 0)
+// Speed the motor backward → analogWrite(FWD, 0),     analogWrite(BWD, speed)
+#define PIN_LEFT_FWD   9
+#define PIN_LEFT_BWD   6
+#define PIN_RIGHT_FWD  3
+#define PIN_RIGHT_BWD  5
 
 // ─────────────────────────────────────────────────────────────────────────────
-MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
+// POLARITY_DARK_HIGH → dark (black) sensor reads a higher raw ADC value.
+// Flip to POLARITY_DARK_LOW if your board is wired the other way.
+MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_HIGH);
 
-static void motorForward(uint8_t pinA, uint8_t pinB, int speed) {
-  speed = constrain(speed, 0, 255);
-  analogWrite(pinA, speed);
-  analogWrite(pinB, 0);
+// ── Motor helpers ─────────────────────────────────────────────────────────────
+// Signed speed: positive = forward, negative = backward, 0 = coast
+static void motorSet(uint8_t pinFwd, uint8_t pinBwd, int speed) {
+  speed = constrain(speed, -255, 255);
+  if (speed >= 0) {
+    analogWrite(pinFwd, speed);
+    analogWrite(pinBwd, 0);
+  } else {
+    analogWrite(pinFwd, 0);
+    analogWrite(pinBwd, -speed);
+  }
+}
+
+static void driveMotors(int leftSpeed, int rightSpeed) {
+  motorSet(PIN_LEFT_FWD,  PIN_LEFT_BWD,  leftSpeed);
+  motorSet(PIN_RIGHT_FWD, PIN_RIGHT_BWD, rightSpeed);
 }
 
 static void stopMotors() {
-  analogWrite(LEFT_A,  0); analogWrite(LEFT_B,  0);
-  analogWrite(RIGHT_A, 0); analogWrite(RIGHT_B, 0);
+  analogWrite(PIN_LEFT_FWD,  0); analogWrite(PIN_LEFT_BWD,  0);
+  analogWrite(PIN_RIGHT_FWD, 0); analogWrite(PIN_RIGHT_BWD, 0);
 }
 
 static void blinkLED(int n, int onMs, int offMs) {
@@ -44,22 +71,35 @@ static void blinkLED(int n, int onMs, int offMs) {
   }
 }
 
+#if SERIAL_DEBUG
+static void printDebug(float error, float correction, int lSpd, int rSpd) {
+  Serial.print(F("err="));
+  Serial.print(error, 2);
+  Serial.print(F(" cor="));
+  Serial.print(correction, 1);
+  Serial.print(F(" L=")); Serial.print(lSpd);
+  Serial.print(F(" R=")); Serial.println(rSpd);
+}
+#endif
+
 // ── State ─────────────────────────────────────────────────────────────────────
-static int      lastError      = 0;       // remembered for line-lost recovery
-static uint32_t lineLostAt     = 0;       // timestamp when line was last seen
-static bool     lineWasSeen    = false;
-// ─────────────────────────────────────────────────────────────────────────────
+static float    pidIntegral   = 0.0f;
+static float    prevError     = 0.0f;
+static float    lastGoodError = 0.0f;   // sign tells us which side line was on
+static uint32_t lineLostAt    = 0;
+static bool     lineWasSeen   = false;
+static uint32_t lastLoopUs    = 0;      // for dt calculation
+
 void setup() {
-  Serial.begin(9600);
-  Serial.println("Start MCU");
+  Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(LEFT_A,  OUTPUT); pinMode(LEFT_B,  OUTPUT);
-  pinMode(RIGHT_A, OUTPUT); pinMode(RIGHT_B, OUTPUT);
+  pinMode(PIN_LEFT_FWD,  OUTPUT); pinMode(PIN_LEFT_BWD,  OUTPUT);
+  pinMode(PIN_RIGHT_FWD, OUTPUT); pinMode(PIN_RIGHT_BWD, OUTPUT);
   stopMotors();
 
   sensor.begin();
 
-  Serial.println(F("CALIBRATING: sweep robot over black & white for 12 s..."));
+  Serial.println(F("CALIBRATING 12 s: sweep sensor over the full track surface..."));
   blinkLED(3, 150, 150);
 
   bool ok = sensor.calibrate(12000UL);
@@ -68,85 +108,117 @@ void setup() {
     Serial.println(F("Calibration OK"));
     blinkLED(6, 60, 60);
   } else {
-    Serial.println(F("Calibration WARNING: zones overlap on some channels"));
+    Serial.println(F("Calibration WARNING — results may be poor"));
     blinkLED(3, 500, 200);
   }
 
-  // Print calibration table for debugging
-  Serial.println(F("\nCH  BLACK_RAW  [zone]       WHITE_RAW  [zone]"));
+  // Print calibration table
+  Serial.println(F("\nCH  MIN  MAX"));
   for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ch++) {
-    uint16_t mn = sensor.getCalibMin(ch);
-    uint16_t mx = sensor.getCalibMax(ch);
-    uint16_t bLo = (mn >= MUX_CALIB_MARGIN) ? mn - MUX_CALIB_MARGIN : 0;
-    uint16_t bHi = mn + MUX_CALIB_MARGIN;
-    uint16_t wLo = (mx >= MUX_CALIB_MARGIN) ? mx - MUX_CALIB_MARGIN : 0;
-    uint16_t wHi = mx + MUX_CALIB_MARGIN;
     if (ch < 10) Serial.print(' ');
-    Serial.print(ch);  Serial.print("  ");
-    Serial.print(mn);  Serial.print("       [");
-    Serial.print(bLo); Serial.print("-");
-    Serial.print(bHi); Serial.print("]   ");
-    Serial.print(mx);  Serial.print("       [");
-    Serial.print(wLo); Serial.print("-");
-    Serial.print(wHi); Serial.println("]");
+    Serial.print(ch);
+    Serial.print(F("   "));
+    Serial.print(sensor.getCalibMin(ch));
+    Serial.print(F("   "));
+    Serial.println(sensor.getCalibMax(ch));
   }
 
+  lastLoopUs = micros();
   digitalWrite(LED_BUILTIN, HIGH);
-  Serial.println(F("\n=== RUNNING ==="));
+  Serial.println(F("=== RUNNING ==="));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void loop() {
-  uint8_t digital[MUX_NUM_CHANNELS];
+  // ── Delta-time for the integral term (seconds) ────────────────────────────
+  uint32_t now  = micros();
+  float    dt   = (float)(now - lastLoopUs) * 1e-6f;
+  if (dt <= 0.0f || dt > 0.1f) dt = 0.01f;  // clamp runaway dt on first loop
+  lastLoopUs = now;
 
-  if (!sensor.getDigital(digital)) {
+  // ── Read analog values ────────────────────────────────────────────────────
+  // getAnalog() returns calibrated 0..1000 per channel (1000 = darkest = line).
+  // We use the analog signal directly so the centroid is smooth and continuous.
+  uint16_t analog[MUX_NUM_CHANNELS];
+  if (!sensor.getAnalog(analog)) {
     stopMotors();
     return;
   }
 
-  int32_t weightedSum = 0;
-  int     blackCount  = 0;
+  // ── Weighted centroid (analog) ────────────────────────────────────────────
+  // Positions 0..15, centre = 7.5
+  // error > 0 → line is to the RIGHT of centre → must steer right
+  // error < 0 → line is to the LEFT  of centre → must steer left
+  int32_t  weightedSum  = 0;
+  int32_t  totalWeight  = 0;
 
   for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ch++) {
-    if (digital[ch]) {
-      weightedSum += (int32_t)ch * 2;
-      blackCount++;
-    }
+    weightedSum += (int32_t)analog[ch] * ch;
+    totalWeight += analog[ch];
   }
 
-  if (blackCount == 0) {
+  // ── Line-lost handling ────────────────────────────────────────────────────
+  if (totalWeight < 200) {   // threshold: all sensors see white
     if (!lineWasSeen) {
       stopMotors();
       return;
     }
-    uint32_t now = millis();
-    if ((uint32_t)(now - lineLostAt) > LINE_LOST_TIMEOUT_MS) {
+
+    uint32_t nowMs = millis();
+
+    if ((uint32_t)(nowMs - lineLostAt) > LINE_LOST_TIMEOUT_MS) {
+      // Gave up — full stop and reset PID so it doesn't lurch on next find
       stopMotors();
-      lastError = 0;
+      pidIntegral = 0.0f;
+      prevError   = 0.0f;
       return;
     }
-  } else {
-    int centroid = (int)(weightedSum / blackCount);
-    lastError    = centroid - SENSOR_CENTRE;          // negative=left, positive=right
-    lineLostAt   = millis();
-    lineWasSeen  = true;
+
+    // Spin toward the side the line was last seen on.
+    // lastGoodError > 0 → line was right → spin right (left fwd, right back)
+    // lastGoodError < 0 → line was left  → spin left  (right fwd, left back)
+    if (lastGoodError >= 0) {
+      driveMotors( REVERSE_SPEED, -REVERSE_SPEED);
+    } else {
+      driveMotors(-REVERSE_SPEED,  REVERSE_SPEED);
+    }
+    return;
   }
 
-  // ── Proportional speed calculation ─────────────────────────────────────────
-  int correction = KP * lastError;
+  // ── Good centroid reading ─────────────────────────────────────────────────
+  float centroid = (float)weightedSum / (float)totalWeight;  // 0.0 .. 15.0
+  float error    = centroid - 7.5f;                          // -7.5 .. +7.5
 
-  int leftSpeed  = BASE_SPEED + correction;
-  int rightSpeed = BASE_SPEED - correction;
+  lastGoodError = error;
+  lineLostAt    = millis();
+  lineWasSeen   = true;
 
-  if (blackCount > 0) {
-    leftSpeed  = constrain(leftSpeed,  MIN_TURN_SPEED, 255);
-    rightSpeed = constrain(rightSpeed, MIN_TURN_SPEED, 255);
-  }
+  // ── PID ───────────────────────────────────────────────────────────────────
+  pidIntegral += error * dt;
+  pidIntegral  = constrain(pidIntegral, -INTEGRAL_CLAMP, INTEGRAL_CLAMP);
 
-  motorForward(LEFT_A,  LEFT_B,  leftSpeed);
-  motorForward(RIGHT_A, RIGHT_B, rightSpeed);
+  float derivative = (error - prevError) / dt;
+  prevError = error;
 
-  Serial.print(F("err=")); Serial.print(lastError);
-  Serial.print(F(" L="));  Serial.print(leftSpeed);
-  Serial.print(F(" R="));  Serial.println(rightSpeed);
+  float correction = KP * error
+                   + KI * pidIntegral
+                   + KD * derivative;
+
+  // ── Dynamic base speed (slow on sharp bends) ──────────────────────────────
+  float absErr      = fabsf(error);
+  int   effectiveBase = (int)(BASE_SPEED - SPEED_REDUCE_K * absErr);
+  effectiveBase = max(effectiveBase, MIN_DRIVE_SPEED);
+
+  // error > 0 → line RIGHT → increase rightSpeed, decrease leftSpeed
+  int leftSpeed  = effectiveBase - (int)correction;
+  int rightSpeed = effectiveBase + (int)correction;
+
+  // Clamp to signed range; allows brief reversal on very sharp turns
+  leftSpeed  = constrain(leftSpeed,  -MAX_SPEED, MAX_SPEED);
+  rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
+
+  driveMotors(leftSpeed, rightSpeed);
+
+#if SERIAL_DEBUG
+  printDebug(error, correction, leftSpeed, rightSpeed);
+#endif
 }
