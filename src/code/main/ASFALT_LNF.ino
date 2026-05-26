@@ -1,6 +1,5 @@
 #include "MuxSensor.h"
 
-// ── Tuning ───────────────────────────────────────────────────────────────────
 #define BASE_SPEED            160   // cruise speed (0-255)
 #define MAX_SPEED             255   // absolute motor cap
 #define MIN_DRIVE_SPEED        60   // minimum forward speed (prevents stall)
