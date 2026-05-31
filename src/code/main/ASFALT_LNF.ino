@@ -1,164 +1,114 @@
 #include "MuxSensor.h"
 
-// ── Pins ──────────────────────────────────────────────────────────────────────
+// ── Sensor ────────────────────────────────────────────
 #define PIN_S0   12
 #define PIN_S1   11
 #define PIN_S2   10
 #define PIN_S3    8
 #define PIN_COM  A0
 
-#define LEFT_A    9
-#define LEFT_B    6
-#define RIGHT_A   3
-#define RIGHT_B   5
+MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
+uint8_t  digital[MUX_NUM_CHANNELS];
 
-// ── Sensor logic ──────────────────────────────────────────────────────────────
-// true  → getDigital() returns 1 when sensor is ON the line  (POLARITY_DARK_LOW)
-// false → getDigital() returns 1 when sensor is OFF the line (POLARITY_DARK_HIGH)
-#define SENSOR_ACTIVE_HIGH  true
+// ── Motors ────────────────────────────────────────────
+#define LEFT_A    6   // PWM  left  motor
+#define LEFT_B    9   // DIR  left  motor
+#define RIGHT_A   5   // PWM  right motor
+#define RIGHT_B   3   // DIR  right motor
 
-#if SENSOR_ACTIVE_HIGH
-  #define SENSOR_POLARITY POLARITY_DARK_LOW
-  #define ON_LINE(v)  ((v) == 1)
-#else
-  #define SENSOR_POLARITY POLARITY_DARK_HIGH
-  #define ON_LINE(v)  ((v) == 0)
-#endif
+// ── Tuning ────────────────────────────────────────────
+int   baseSpeed = 255;
+float kp        = 0.10f;
+float kd        = 1.5f;
 
-// ── Tuning ────────────────────────────────────────────────────────────────────
-#define BASE_SPEED          130
-#define KP                  8
-#define MIN_TURN_SPEED      30
-#define LINE_LOST_TIMEOUT_MS  300UL
+int sharpTurnThreshold = 50;
+int minTurnSpeed       = 40;
 
-// Centroid scale: each channel contributes ch*2, centre = (15)*2/2 = 15
-#define SENSOR_CENTRE  ((MUX_NUM_CHANNELS - 1) * 2 / 2)
+// ── State ─────────────────────────────────────────────
+int last_error = 0;
 
-// ─────────────────────────────────────────────────────────────────────────────
-MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, SENSOR_POLARITY);
+// ── Motor helpers ─────────────────────────────────────
+void setMotors(int left, int right) {
+  left  = constrain(left,  -255, 255);
+  right = constrain(right, -255, 255);
 
-static int      lastError   = 0;
-static uint32_t lineLostAt  = 0;
-static bool     lineWasSeen = false;
-
-// ─────────────────────────────────────────────────────────────────────────────
-static void motorForward(uint8_t pinA, uint8_t pinB, int speed) {
-  speed = constrain(speed, 0, 255);
-  analogWrite(pinA, speed);
-  analogWrite(pinB, 0);
+  analogWrite(LEFT_A,  left  > 0 ?  left  : 0);
+  analogWrite(LEFT_B,  left  < 0 ? -left  : 0);
+  analogWrite(RIGHT_A, right > 0 ?  right : 0);
+  analogWrite(RIGHT_B, right < 0 ? -right : 0);
 }
 
-static void stopMotors() {
-  analogWrite(LEFT_A,  0); analogWrite(LEFT_B,  0);
-  analogWrite(RIGHT_A, 0); analogWrite(RIGHT_B, 0);
-}
+void stop() { setMotors(0, 0); }
 
-static void blinkLED(int n, int onMs, int offMs) {
-  for (int i = 0; i < n; i++) {
-    digitalWrite(LED_BUILTIN, HIGH); delay(onMs);
-    digitalWrite(LED_BUILTIN, LOW);  delay(offMs);
-  }
-}
+// ── Weighted position (0 – 15000, centre = 7500) ──────
+int readPosition() {
+  sensor.getDigital(digital);
 
-// Print sensor bar: '-' = on line, '.' = not on line
-static void printSensorBar(const uint8_t digital[MUX_NUM_CHANNELS]) {
-  Serial.print(F("S:["));
-  for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ch++) {
-    Serial.print(ON_LINE(digital[ch]) ? 'X' : '.');
-  }
-  Serial.print(F("] "));
-}
+  long  weightedSum = 0;
+  int   activeCount = 0;
 
-// ─────────────────────────────────────────────────────────────────────────────
-void setup() {
-  Serial.begin(9600);
-  Serial.println(F("Start MCU"));
-
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(LEFT_A,  OUTPUT); pinMode(LEFT_B,  OUTPUT);
-  pinMode(RIGHT_A, OUTPUT); pinMode(RIGHT_B, OUTPUT);
-  stopMotors();
-
-  sensor.begin();
-
-  Serial.println(F("CALIBRATING: sweep robot over black & white for 12 s..."));
-  blinkLED(3, 150, 150);
-
-  bool ok = sensor.calibrate(12000UL);
-
-  if (ok) {
-    Serial.println(F("Calibration OK"));
-    blinkLED(6, 60, 60);
-  } else {
-    Serial.println(F("Calibration WARNING: zones overlap on some channels"));
-    blinkLED(3, 500, 200);
+  for (uint8_t i = 0; i < MUX_NUM_CHANNELS; i++) {
+    if (digital[i]) {
+      weightedSum += (long)i * 1000;
+      activeCount++;
+    }
   }
 
-  // Print calibration table
-  Serial.println(F("\nCH  MIN   [black zone]   MAX   [white zone]"));
-  for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ch++) {
-    uint16_t mn  = sensor.getCalibMin(ch);
-    uint16_t mx  = sensor.getCalibMax(ch);
-    uint16_t bLo = (mn >= MUX_CALIB_MARGIN) ? mn - MUX_CALIB_MARGIN : 0;
-    uint16_t bHi = mn + MUX_CALIB_MARGIN;
-    uint16_t wLo = (mx >= MUX_CALIB_MARGIN) ? mx - MUX_CALIB_MARGIN : 0;
-    uint16_t wHi = mx + MUX_CALIB_MARGIN;
-    if (ch < 10) Serial.print(' ');
-    Serial.print(ch);  Serial.print("  ");
-    Serial.print(mn);  Serial.print("  ["); Serial.print(bLo); Serial.print('-'); Serial.print(bHi); Serial.print("]   ");
-    Serial.print(mx);  Serial.print("  ["); Serial.print(wLo); Serial.print('-'); Serial.print(wHi); Serial.println("]");
-  }
-
-  digitalWrite(LED_BUILTIN, HIGH);
-  Serial.println(F("\n=== RUNNING ==="));
+  if (activeCount == 0) return -1;
+  return (int)(weightedSum / activeCount);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-void loop() {
-  uint8_t digital[MUX_NUM_CHANNELS];
+// ── Adaptive speed ────────────────────────────────────
+int getAdaptiveSpeed(int error) {
+  int absError = abs(error);
+  if (absError <= sharpTurnThreshold) return baseSpeed;
 
-  if (!sensor.getDigital(digital)) {
-    stopMotors();
+  float t = (float)(absError - sharpTurnThreshold) / (7500 - sharpTurnThreshold);
+  t = constrain(t, 0.0f, 1.0f);
+  return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t * t);
+}
+
+// ── PD step ───────────────────────────────────────────
+void pidStep() {
+  int position = readPosition();
+
+  if (position < 0) {
+    int correction = (int)(kp * last_error * 3.8f);
+    setMotors(baseSpeed - correction, baseSpeed + correction);
     return;
   }
 
-  int32_t weightedSum = 0;
-  int     blackCount  = 0;
+  int error      = position - 7500;
+  int correction = (int)(kp * error) + (int)(kd * (error - last_error));
+  int speed      = getAdaptiveSpeed(error);
 
-  for (uint8_t ch = 0; ch < MUX_NUM_CHANNELS; ch++) {
-    if (ON_LINE(digital[ch])) {
-      weightedSum += (int32_t)ch * 2;
-      blackCount++;
-    }
-  }
+  setMotors(speed + correction, speed - correction);
+  last_error = error;
+}
 
-  if (blackCount == 0) {
-    if (!lineWasSeen) {
-      stopMotors();
-      return;
-    }
-    // Keep last correction for LINE_LOST_TIMEOUT_MS, then stop
-    if ((uint32_t)(millis() - lineLostAt) > LINE_LOST_TIMEOUT_MS) {
-      stopMotors();
-      lastError = 0;
-      return;
-    }
-  } else {
-    int centroid = (int)(weightedSum / blackCount);
-    lastError   = centroid - SENSOR_CENTRE;   // negative = left, positive = right
-    lineLostAt  = millis();
-    lineWasSeen = true;
-  }
+// ── Setup ─────────────────────────────────────────────
+void setup() {
+  Serial.begin(9600);
 
-  int correction = KP * lastError;
-  int leftSpeed  = constrain(BASE_SPEED + correction, MIN_TURN_SPEED, 255);
-  int rightSpeed = constrain(BASE_SPEED - correction, MIN_TURN_SPEED, 255);
+  pinMode(LEFT_A,      OUTPUT);
+  pinMode(LEFT_B,      OUTPUT);
+  pinMode(RIGHT_A,     OUTPUT);
+  pinMode(RIGHT_B,     OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
 
-  motorForward(LEFT_A,  LEFT_B,  leftSpeed);
-  motorForward(RIGHT_A, RIGHT_B, rightSpeed);
+  sensor.begin();
+  stop();
 
-  printSensorBar(digital);
-  Serial.print(F("err=")); Serial.print(lastError);
-  Serial.print(F(" L="));  Serial.print(leftSpeed);
-  Serial.print(F(" R="));  Serial.println(rightSpeed);
+  Serial.println("Calibrating...");
+  digitalWrite(LED_BUILTIN, HIGH);
+  bool ok = sensor.calibrate(12000UL);
+  digitalWrite(LED_BUILTIN, LOW);
+  Serial.println(ok ? "Calibration OK" : "Calibration low-contrast!");
+
+  delay(1000);
+}
+
+// ── Loop ──────────────────────────────────────────────
+void loop() {
+  pidStep();
 }
