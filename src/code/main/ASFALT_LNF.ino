@@ -19,7 +19,7 @@ uint8_t  digital[MUX_NUM_CHANNELS];
 // ── Tuning ────────────────────────────────────────────
 int   baseSpeed = 255;
 float kp        = 0.10f;
-float ki        = 0.001f;   // integral gain — start small, increase if drift persists
+float ki        = 0.002f;   // integral gain — start small, increase if drift persists
 float kd        = 1.5f;
 
 int   sharpTurnThreshold = 50;
@@ -83,7 +83,6 @@ void pidStep() {
 
   int error = position - 7500;
 
-  // Integral with anti-windup clamp
   integral += error;
   integral  = constrain(integral, -iClamp, iClamp);
 
