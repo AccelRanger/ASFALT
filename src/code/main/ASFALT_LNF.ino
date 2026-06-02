@@ -19,13 +19,16 @@ uint8_t  digital[MUX_NUM_CHANNELS];
 // ── Tuning ────────────────────────────────────────────
 int   baseSpeed = 255;
 float kp        = 0.10f;
+float ki        = 0.001f;   // integral gain — start small, increase if drift persists
 float kd        = 1.5f;
 
-int sharpTurnThreshold = 50;
-int minTurnSpeed       = 40;
+int   sharpTurnThreshold = 50;
+int   minTurnSpeed       = 40;
+float iClamp             = 3000.0f;  // anti-windup: caps the integral term
 
 // ── State ─────────────────────────────────────────────
-int last_error = 0;
+int   last_error    = 0;
+float integral      = 0.0f;
 
 // ── Motor helpers ─────────────────────────────────────
 void setMotors(int left, int right) {
@@ -44,8 +47,8 @@ void stop() { setMotors(0, 0); }
 int readPosition() {
   sensor.getDigital(digital);
 
-  long  weightedSum = 0;
-  int   activeCount = 0;
+  long weightedSum = 0;
+  int  activeCount = 0;
 
   for (uint8_t i = 0; i < MUX_NUM_CHANNELS; i++) {
     if (digital[i]) {
@@ -68,19 +71,27 @@ int getAdaptiveSpeed(int error) {
   return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t * t);
 }
 
-// ── PD step ───────────────────────────────────────────
+// ── PID step ──────────────────────────────────────────
 void pidStep() {
   int position = readPosition();
 
+  // Line lost → go straight forward and freeze the integrator
   if (position < 0) {
-    int correction = (int)(kp * last_error * 3.8f);
-    setMotors(baseSpeed - correction, baseSpeed + correction);
+    setMotors(baseSpeed, baseSpeed);
     return;
   }
 
-  int error      = position - 7500;
-  int correction = (int)(kp * error) + (int)(kd * (error - last_error));
-  int speed      = getAdaptiveSpeed(error);
+  int error = position - 7500;
+
+  // Integral with anti-windup clamp
+  integral += error;
+  integral  = constrain(integral, -iClamp, iClamp);
+
+  int correction = (int)(kp * error)
+                 + (int)(ki * integral)
+                 + (int)(kd * (error - last_error));
+
+  int speed = getAdaptiveSpeed(error);
 
   setMotors(speed + correction, speed - correction);
   last_error = error;
