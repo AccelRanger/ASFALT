@@ -2,10 +2,13 @@
 #include <Arduino.h>
 
 #define MUX_NUM_CHANNELS  16
-#define MUX_CALIB_MARGIN  30    // hysteresis band around cal min/max (ADC counts)
-#define MUX_SETTLE_US     10    // microseconds to wait after channel select
+#define MUX_CALIB_MARGIN  30    // ± ADC counts around each calibrated extreme
+#define MUX_SETTLE_US     200   // µs to settle after switching MUX channel
 
-enum MuxPolarity { POLARITY_DARK_LOW, POLARITY_DARK_HIGH };
+enum MuxPolarity {
+  POLARITY_DARK_LOW,    // black → LOW  reading  (typical TCRT5000)
+  POLARITY_DARK_HIGH    // black → HIGH reading
+};
 
 class MuxSensor {
 public:
@@ -15,22 +18,17 @@ public:
 
   void begin();
 
-  // Sweep sensor over black & white for durationMs, records min/max per channel.
-  // Returns true if every channel saw enough contrast.
   bool calibrate(uint32_t durationMs = 12000UL);
 
   bool isCalibrated() const { return _calibrated; }
 
-  // Fill out[16] with 1 = on line, 0 = off line.
-  // Returns false if not yet calibrated.
+  // Raw 10-bit ADC values for all 16 channels.
+  void getRawAnalogValues(uint16_t out[MUX_NUM_CHANNELS]);
   bool getDigital(uint8_t out[MUX_NUM_CHANNELS]);
 
-  // Raw ADC reads (0-1023) for all channels.
-  void getRawAnalogValues(uint16_t out[MUX_NUM_CHANNELS]);
-
+  // Debug
   uint16_t getCalibMin(uint8_t ch) const;
   uint16_t getCalibMax(uint8_t ch) const;
-  uint16_t getThreshold(uint8_t ch) const;
 
 private:
   static const uint8_t _muxTable[MUX_NUM_CHANNELS][4];
