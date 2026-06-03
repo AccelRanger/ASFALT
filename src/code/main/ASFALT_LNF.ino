@@ -11,20 +11,20 @@ MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
 uint8_t  digital[MUX_NUM_CHANNELS];
 
 // ── Motors ────────────────────────────────────────────
-#define LEFT_A    6   // PWM  left  motor
-#define LEFT_B    9   // DIR  left  motor
-#define RIGHT_A   5   // PWM  right motor
-#define RIGHT_B   3   // DIR  right motor
+#define LEFT_A    6
+#define LEFT_B    9
+#define RIGHT_A   5
+#define RIGHT_B   3
 
 // ── Tuning ────────────────────────────────────────────
 int   baseSpeed = 255;
 float kp        = 0.10f;
-float ki        = 0.002f;   // integral gain — start small, increase if drift persists
+float ki        = 0.002f;
 float kd        = 1.5f;
 
 int   sharpTurnThreshold = 50;
 int   minTurnSpeed       = 40;
-float iClamp             = 3000.0f;  // anti-windup: caps the integral term
+float iClamp             = 3000.0f;
 
 // ── State ─────────────────────────────────────────────
 int   last_error    = 0;
@@ -74,8 +74,6 @@ int getAdaptiveSpeed(int error) {
 // ── PID step ──────────────────────────────────────────
 void pidStep() {
   int position = readPosition();
-
-  // Line lost → go straight forward and freeze the integrator
   if (position < 0) {
     setMotors(baseSpeed, baseSpeed);
     return;
