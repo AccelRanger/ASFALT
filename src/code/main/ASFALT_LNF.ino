@@ -7,14 +7,13 @@
 // ToF config
 VL53L1X tof;
 #define OBSTACLE_MM          200
-#define TOF_INTERVAL_MS       33
+#define TOF_INTERVAL_MS       50   // match the timing budget (50 000 µs = 50 ms)
 #define OBSTACLE_CONFIRM       4
 
 bool     tofOk           = false;
 uint16_t tofDistance     = 9999;
 uint32_t tofLastRead     = 0;
 uint8_t  obstacleCounter = 0;
-bool     freshReading    = false;
 
 // line sensor pins
 #define PIN_S0   12
@@ -23,7 +22,8 @@ bool     freshReading    = false;
 #define PIN_S3    8
 #define PIN_COM  A0
 
-// sensor initialization
+#define AVOID_TURN_SPEED 100
+
 MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
 uint8_t digital[MUX_NUM_CHANNELS];
 
@@ -35,25 +35,18 @@ uint8_t digital[MUX_NUM_CHANNELS];
 
 // PID config
 int   baseSpeed          = 255;
-float kp                 = 0.10f;
-float ki                 = 0.001f;
-float kd                 = 1.5f;
-int   sharpTurnThreshold = 50;
-int   minTurnSpeed       = 40;
-float iClamp             = 3000.0f;
+float kp                 = 0.07f;
+float ki                 = 0.0005f;
+float kd                 = 2.8f;
+int   sharpTurnThreshold = 2000;
+int   minTurnSpeed       = 160;
+float iClamp             = 800.0f;
 
-// config for obstacle avoidance
-#define AVOID_BACK_MS     300
-#define AVOID_TURN_MS     400
-#define AVOID_FWD_MS      600
-#define AVOID_RETURN_MS   400
-#define AVOID_TURN_SPEED  180
-
-// pid states
+// PID state
 int   last_error = 0;
 float integral   = 0.0f;
 
-// motor helpers
+// ── Motor helpers ─────────────────────────────────────
 void setMotors(int left, int right) {
   left  = constrain(left,  -255, 255);
   right = constrain(right, -255, 255);
@@ -62,27 +55,27 @@ void setMotors(int left, int right) {
   analogWrite(RIGHT_A, right > 0 ?  right : 0);
   analogWrite(RIGHT_B, right < 0 ? -right : 0);
 }
-
 void stop() { setMotors(0, 0); }
 
-// non blocking tof
-void updateToF() {
-  freshReading = false;
-  if (!tofOk) return;
-  if (millis() - tofLastRead < 50) return;
-  if (!tof.dataReady()) return;
+// ── ToF: returns true on a fresh valid reading ────────
+bool updateToF() {
+  if (!tofOk) return false;
+  if (millis() - tofLastRead < TOF_INTERVAL_MS) return false;
+  if (!tof.dataReady()) return false;
 
   tof.read(false);
   tofLastRead = millis();
 
   if (tof.ranging_data.range_status == VL53L1X::RangeValid
       && tof.ranging_data.range_mm > 20) {
-    tofDistance  = tof.ranging_data.range_mm;
-    freshReading = true;
+    tofDistance = tof.ranging_data.range_mm;
+    return true;   // ← caller knows a real reading just landed
   }
+  return false;
 }
 
-bool obstacleDetected() {
+// ── Obstacle detection: only call with a fresh reading ──
+bool obstacleDetected(bool freshReading) {
   if (!freshReading) return false;
 
   if (tofDistance < OBSTACLE_MM) {
@@ -98,7 +91,16 @@ bool obstacleDetected() {
   return obstacleCounter >= OBSTACLE_CONFIRM;
 }
 
-// weighted position
+// ── Line present? (any sensor active) ────────────────
+bool lineVisible() {
+  sensor.getDigital(digital);
+  for (uint8_t i = 0; i < MUX_NUM_CHANNELS; i++) {
+    if (digital[i]) return true;
+  }
+  return false;
+}
+
+// ── Weighted position ─────────────────────────────────
 int readPosition() {
   sensor.getDigital(digital);
   long weightedSum = 0;
@@ -113,40 +115,79 @@ int readPosition() {
   return (int)(weightedSum / activeCount);
 }
 
-// adaptive speed
+// ── Adaptive speed ────────────────────────────────────
 int getAdaptiveSpeed(int error) {
   int absError = abs(error);
   if (absError <= sharpTurnThreshold) return baseSpeed;
   float t = (float)(absError - sharpTurnThreshold) / (7500 - sharpTurnThreshold);
   t = constrain(t, 0.0f, 1.0f);
-  return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t * t);
+  return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t);
 }
 
-// obstacle avoidance
+// ── Obstacle avoidance (open floor) ───────────────────
+// Pattern: back off → turn left 90° → forward past obstacle
+//          → arc right back toward line → scan for line
 void avoidObstacle() {
   Serial.println("Obstacle! Avoiding...");
 
-  setMotors(-baseSpeed, -baseSpeed);
-  delay(AVOID_BACK_MS);
+  // 1. Back away from obstacle
+  setMotors(-200, -200);
+  delay(500);
 
-  setMotors(AVOID_TURN_SPEED, -AVOID_TURN_SPEED);
-  delay(AVOID_TURN_MS);
+  // 2. Turn left ~90° to face beside the obstacle
+  setMotors(-200, 200);
+  delay(500);
 
-  setMotors(baseSpeed, baseSpeed);
-  delay(AVOID_FWD_MS);
+  // 3. Drive forward, clearing the obstacle sideways
+  setMotors(200, 200);
+  delay(500);
 
-  setMotors(-AVOID_TURN_SPEED, AVOID_TURN_SPEED);
-  delay(AVOID_RETURN_MS);
+  // 4. Arc right to angle back toward where the line should be
+  //    (outer wheel faster = gentle curve rather than pivot)
+  setMotors(200, -200);
+  delay(500);
 
-  last_error = 0;
-  integral   = 0.0f;
+  setMotors(200, 200);
+  delay(500);
+
+  // 5. Actively scan for the line; slow creep forward while searching
+  Serial.println("Scanning for line...");
+  uint32_t scanStart = millis();
+  bool found = false;
+  while (millis() - scanStart < 500) {
+    if (lineVisible()) {
+      found = true;
+      break;
+    }
+    // gentle rightward arc to keep sweeping back toward line
+    setMotors(AVOID_TURN_SPEED, AVOID_TURN_SPEED / 2);
+    delay(20);
+  }
+
+  if (!found) {
+    // fallback: spin in place until line found or timeout
+    Serial.println("Line not found, spinning...");
+    scanStart = millis();
+    while (millis() - scanStart < 500) {
+      setMotors(AVOID_TURN_SPEED, -AVOID_TURN_SPEED);
+      delay(20);
+      if (lineVisible()) break;
+    }
+  }
+
+  stop();
+  delay(50);
+
+  // Reset PID state so there's no kick from stale error
+  last_error     = 0;
+  integral       = 0.0f;
+  obstacleCounter = 0;
 
   tof.startContinuous(TOF_INTERVAL_MS);
-
   Serial.println("Avoidance done, resuming line follow.");
 }
 
-// pid step
+// ── PID step ──────────────────────────────────────────
 void pidStep() {
   int position = readPosition();
   if (position < 0) {
@@ -155,6 +196,11 @@ void pidStep() {
   }
 
   int error = position - 7500;
+
+  if (abs(error) < abs(last_error)) {
+    integral *= 0.85f;
+  }
+
   integral += error;
   integral  = constrain(integral, -iClamp, iClamp);
 
@@ -167,7 +213,7 @@ void pidStep() {
   last_error = error;
 }
 
-// setup
+// ── Setup ─────────────────────────────────────────────
 void setup() {
   Serial.begin(9600);
 
@@ -184,12 +230,12 @@ void setup() {
   if (tof.init()) {
     tof.setDistanceMode(VL53L1X::Short);
     tof.setMeasurementTimingBudget(50000);
-    tof.startContinuous(50);
+    tof.startContinuous(TOF_INTERVAL_MS);
     tofOk = true;
     Serial.println("VL53L1X OK");
   } else {
     Serial.println("VL53L1X not found!");
-}
+  }
 
   sensor.begin();
   stop();
@@ -205,11 +251,10 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────
 void loop() {
-  updateToF();
+  bool fresh = updateToF();   // true only when a new reading just landed
 
-  if (obstacleDetected()) {
+  if (obstacleDetected(fresh)) {
     stop();
-    obstacleCounter = 0;
     avoidObstacle();
   } else {
     pidStep();
