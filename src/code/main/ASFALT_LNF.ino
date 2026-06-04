@@ -1,8 +1,10 @@
+// AccelRanger
+
 #include "MuxSensor.h"
 #include <Wire.h>
 #include <VL53L1X.h>
 
-// ── ToF sensor ────────────────────────────────────────
+// tof config
 VL53L1X tof;
 #define OBSTACLE_MM          200
 #define TOF_INTERVAL_MS       33
@@ -14,23 +16,24 @@ uint32_t tofLastRead     = 0;
 uint8_t  obstacleCounter = 0;
 bool     freshReading    = false;
 
-// ── Line sensor ───────────────────────────────────────
+// line sensor pins
 #define PIN_S0   12
 #define PIN_S1   11
 #define PIN_S2   10
 #define PIN_S3    8
 #define PIN_COM  A0
 
+// sensor initialization
 MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
 uint8_t digital[MUX_NUM_CHANNELS];
 
-// ── Motors ────────────────────────────────────────────
+// motor pins
 #define LEFT_A    6
 #define LEFT_B    9
 #define RIGHT_A   5
 #define RIGHT_B   3
 
-// ── Tuning ────────────────────────────────────────────
+// PID config
 int   baseSpeed          = 255;
 float kp                 = 0.10f;
 float ki                 = 0.001f;
@@ -39,18 +42,18 @@ int   sharpTurnThreshold = 50;
 int   minTurnSpeed       = 40;
 float iClamp             = 3000.0f;
 
-// ── Obstacle avoidance timing (ms) ────────────────────
+// config for obstacle avoidance
 #define AVOID_BACK_MS     300
 #define AVOID_TURN_MS     400
 #define AVOID_FWD_MS      600
 #define AVOID_RETURN_MS   400
 #define AVOID_TURN_SPEED  180
 
-// ── PID state ─────────────────────────────────────────
+// pid states
 int   last_error = 0;
 float integral   = 0.0f;
 
-// ── Motor helpers ─────────────────────────────────────
+// motor helpers
 void setMotors(int left, int right) {
   left  = constrain(left,  -255, 255);
   right = constrain(right, -255, 255);
@@ -62,11 +65,11 @@ void setMotors(int left, int right) {
 
 void stop() { setMotors(0, 0); }
 
-// ── Non-blocking ToF poll ─────────────────────────────
+// non blocking tof
 void updateToF() {
   freshReading = false;
   if (!tofOk) return;
-  if (millis() - tofLastRead < 50) return;   // match your budget
+  if (millis() - tofLastRead < 50) return;
   if (!tof.dataReady()) return;
 
   tof.read(false);
@@ -95,7 +98,7 @@ bool obstacleDetected() {
   return obstacleCounter >= OBSTACLE_CONFIRM;
 }
 
-// ── Weighted position (0 – 15000, centre = 7500) ──────
+// weighted position
 int readPosition() {
   sensor.getDigital(digital);
   long weightedSum = 0;
@@ -110,7 +113,7 @@ int readPosition() {
   return (int)(weightedSum / activeCount);
 }
 
-// ── Adaptive speed ────────────────────────────────────
+// adaptive speed
 int getAdaptiveSpeed(int error) {
   int absError = abs(error);
   if (absError <= sharpTurnThreshold) return baseSpeed;
@@ -119,7 +122,7 @@ int getAdaptiveSpeed(int error) {
   return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t * t);
 }
 
-// ── Obstacle avoidance ────────────────────────────────
+// obstacle avoidance
 void avoidObstacle() {
   Serial.println("Obstacle! Avoiding...");
 
@@ -143,7 +146,7 @@ void avoidObstacle() {
   Serial.println("Avoidance done, resuming line follow.");
 }
 
-// ── PID step ──────────────────────────────────────────
+// pid step
 void pidStep() {
   int position = readPosition();
   if (position < 0) {
@@ -164,7 +167,7 @@ void pidStep() {
   last_error = error;
 }
 
-// ── Setup ─────────────────────────────────────────────
+// setup
 void setup() {
   Serial.begin(9600);
 
@@ -174,18 +177,18 @@ void setup() {
   pinMode(RIGHT_B,     OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
 
-Wire.begin();
-Wire.setClock(400000);
+  Wire.begin();
+  Wire.setClock(400000);
 
-tof.setTimeout(500);
-if (tof.init()) {
-  tof.setDistanceMode(VL53L1X::Short);
-  tof.setMeasurementTimingBudget(50000);
-  tof.startContinuous(50);
-  tofOk = true;
-  Serial.println("VL53L1X OK");
-} else {
-  Serial.println("VL53L1X not found!");
+  tof.setTimeout(500);
+  if (tof.init()) {
+    tof.setDistanceMode(VL53L1X::Short);
+    tof.setMeasurementTimingBudget(50000);
+    tof.startContinuous(50);
+    tofOk = true;
+    Serial.println("VL53L1X OK");
+  } else {
+    Serial.println("VL53L1X not found!");
 }
 
   sensor.begin();
