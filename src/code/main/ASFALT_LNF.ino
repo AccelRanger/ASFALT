@@ -8,7 +8,7 @@
 VL53L1X tof;
 #define OBSTACLE_MM          200
 #define TOF_INTERVAL_MS       33
-#define OBSTACLE_CONFIRM       8
+#define OBSTACLE_CONFIRM       4
 
 bool     tofOk           = false;
 uint16_t tofDistance     = 9999;

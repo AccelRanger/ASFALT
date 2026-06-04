@@ -29,6 +29,7 @@ public:
   // Debug
   uint16_t getCalibMin(uint8_t ch) const;
   uint16_t getCalibMax(uint8_t ch) const;
+  uint16_t getThreshold(uint8_t ch) const;
 
 private:
   static const uint8_t _muxTable[MUX_NUM_CHANNELS][4];

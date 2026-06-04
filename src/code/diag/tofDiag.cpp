@@ -1,7 +1,6 @@
 #include <Wire.h>
 #include <VL53L1X.h>
 
-
 // config
 #define DISTANCE_MODE   VL53L1X::Long   // Short / Medium / Long
 #define TIMING_BUDGET   50000           // µs  — 20000 to 1000000
