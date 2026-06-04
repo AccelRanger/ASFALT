@@ -4,7 +4,7 @@
 #include <Wire.h>
 #include <VL53L1X.h>
 
-// tof config
+// ToF config
 VL53L1X tof;
 #define OBSTACLE_MM          200
 #define TOF_INTERVAL_MS       33
