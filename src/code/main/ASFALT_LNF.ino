@@ -1,4 +1,4 @@
-// AccelRanger
+// AccelRanger – fixed & improved
 
 #include "MuxSensor.h"
 #include <Wire.h>
@@ -27,6 +27,7 @@ uint8_t  obstacleCounter = 0;
 MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
 uint8_t digital[MUX_NUM_CHANNELS];
 
+// Centre setpoint: channels 0..15, weights 0..15000, midpoint = 7500
 #define POSITION_CENTER  7500
 
 // ── Motor pins ────────────────────────────────────────
@@ -47,10 +48,12 @@ float iClamp             = 800.0f;
 // ── PID state ─────────────────────────────────────────
 int   last_error  = 0;
 float integral    = 0.0f;
-int   lastValidError = 0;
+int   lastValidError = 0;   // used when line is lost
 
+// ── Avoid turn speed ─────────────────────────────────
 #define AVOID_TURN_SPEED 100
 
+// ── Non-blocking obstacle avoidance state machine ────
 enum AvoidState {
   AVOID_IDLE,
   AVOID_BACK,
@@ -64,7 +67,7 @@ enum AvoidState {
 };
 
 AvoidState avoidState   = AVOID_IDLE;
-uint32_t   avoidStateTs = 0;
+uint32_t   avoidStateTs = 0;   // millis() when current state started
 
 // ── Motor helpers ─────────────────────────────────────
 void setMotors(int left, int right) {
@@ -77,6 +80,7 @@ void setMotors(int left, int right) {
 }
 void stopMotors() { setMotors(0, 0); }
 
+// ── ToF: non-blocking poll; returns true on a fresh valid reading ──
 bool updateToF() {
   if (!tofOk) return false;
   if (millis() - tofLastRead < TOF_INTERVAL_MS) return false;
@@ -93,6 +97,8 @@ bool updateToF() {
   return false;
 }
 
+// ── Obstacle detection: only advances on a fresh reading ──────────
+// Counter resets when the obstacle clears; does NOT reset on stale reads.
 bool obstacleDetected(bool freshReading) {
   if (!tofOk || !freshReading) return false;
 
@@ -103,7 +109,7 @@ bool obstacleDetected(bool freshReading) {
     Serial.print("  dist=");
     Serial.println(tofDistance);
   } else {
-    obstacleCounter = 0;
+    obstacleCounter = 0;   // obstacle gone — clear the counter
   }
 
   return obstacleCounter >= OBSTACLE_CONFIRM;
@@ -134,6 +140,7 @@ int readPosition() {
 }
 
 // ── Adaptive speed ────────────────────────────────────
+// Full speed up to sharpTurnThreshold; ramps down to minTurnSpeed at max error.
 int getAdaptiveSpeed(int error) {
   int absError = abs(error);
   if (absError <= sharpTurnThreshold) return baseSpeed;
@@ -144,11 +151,15 @@ int getAdaptiveSpeed(int error) {
   return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t);
 }
 
+// ── Non-blocking avoidance state machine ──────────────
+// Call every loop iteration while avoidState != AVOID_IDLE.
+// Returns true when avoidance is complete.
 bool runAvoidance() {
   uint32_t now = millis();
 
   switch (avoidState) {
 
+    // ── 1. Back away from obstacle ──
     case AVOID_BACK:
       setMotors(-200, -200);
       if (now - avoidStateTs >= 500) {
@@ -158,6 +169,7 @@ bool runAvoidance() {
       }
       break;
 
+    // ── 2. Pivot left ~90° ──
     case AVOID_TURN_LEFT:
       setMotors(-200, 200);
       if (now - avoidStateTs >= 500) {
@@ -167,6 +179,7 @@ bool runAvoidance() {
       }
       break;
 
+    // ── 3. Drive forward to clear obstacle ──
     case AVOID_FWD1:
       setMotors(200, 200);
       if (now - avoidStateTs >= 500) {
@@ -176,6 +189,7 @@ bool runAvoidance() {
       }
       break;
 
+    // ── 4. Arc/pivot right to angle back toward line ──
     case AVOID_TURN_RIGHT:
       setMotors(200, -200);
       if (now - avoidStateTs >= 500) {
@@ -185,6 +199,7 @@ bool runAvoidance() {
       }
       break;
 
+    // ── 5. Short forward before line scan ──
     case AVOID_FWD2:
       setMotors(200, 200);
       if (now - avoidStateTs >= 500) {
@@ -194,6 +209,7 @@ bool runAvoidance() {
       }
       break;
 
+    // ── 6. Creep with a rightward arc, scanning for line ──
     case AVOID_SCAN_ARC:
       if (lineVisible()) {
         avoidState = AVOID_DONE;
@@ -207,6 +223,7 @@ bool runAvoidance() {
       }
       break;
 
+    // ── 7. Fallback: spin in place to find line ──
     case AVOID_SCAN_SPIN:
       if (lineVisible()) {
         avoidState = AVOID_DONE;
@@ -214,6 +231,7 @@ bool runAvoidance() {
       }
       setMotors(AVOID_TURN_SPEED, -AVOID_TURN_SPEED);
       if (now - avoidStateTs >= 1500) {
+        // Gave up — stop and mark done; PID will handle recovery
         Serial.println("Avoid: line not found after spin, giving up");
         avoidState = AVOID_DONE;
       }
@@ -222,13 +240,15 @@ bool runAvoidance() {
     // ── 8. Cleanup ──
     case AVOID_DONE:
       stopMotors();
-      delay(50);
+      delay(50);   // one-shot tiny pause is fine here
 
+      // Reset PID state so there's no derivative kick from stale error
       last_error      = 0;
       lastValidError  = 0;
       integral        = 0.0f;
       obstacleCounter = 0;
 
+      // Restart ToF continuous mode cleanly
       if (tofOk) {
         tof.stopContinuous();
         tof.startContinuous(TOF_TIMING_BUDGET_US);
@@ -237,7 +257,7 @@ bool runAvoidance() {
 
       avoidState = AVOID_IDLE;
       Serial.println("Avoidance done, resuming line follow.");
-      return true;
+      return true;   // signal: done
 
     default:
       avoidState = AVOID_IDLE;
@@ -253,12 +273,14 @@ void pidStep() {
 
   int error;
   if (position < 0) {
+    // Line lost — steer based on the last known direction so we turn back
     error = lastValidError;
   } else {
     error          = position - POSITION_CENTER;
     lastValidError = error;
   }
 
+  // Anti-windup: clamp only; don't apply a decay multiplier that fights Ki
   integral += error;
   integral  = constrain(integral, -iClamp, iClamp);
 
@@ -281,14 +303,15 @@ void setup() {
   pinMode(RIGHT_B,     OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
 
+  // I²C must be started and clock set before any device init
   Wire.begin();
   Wire.setClock(400000);
 
   tof.setTimeout(500);
   if (tof.init()) {
     tof.setDistanceMode(VL53L1X::Short);
-    tof.setMeasurementTimingBudget(TOF_TIMING_BUDGET_US);
-    tof.startContinuous(TOF_TIMING_BUDGET_US);
+    tof.setMeasurementTimingBudget(TOF_TIMING_BUDGET_US);   // µs, not ms
+    tof.startContinuous(TOF_TIMING_BUDGET_US);               // µs, not ms
     tofOk       = true;
     tofLastRead = millis();
     Serial.println("VL53L1X OK");
@@ -313,6 +336,7 @@ void loop() {
   bool fresh = updateToF();
 
   if (avoidState != AVOID_IDLE) {
+    // Already avoiding — keep running the state machine
     runAvoidance();
     return;
   }
@@ -320,7 +344,7 @@ void loop() {
   if (obstacleDetected(fresh)) {
     stopMotors();
     Serial.println("Obstacle confirmed! Starting avoidance.");
-    tof.stopContinuous();
+    tof.stopContinuous();           // pause sensor during manoeuvre
     avoidState   = AVOID_BACK;
     avoidStateTs = millis();
     return;
