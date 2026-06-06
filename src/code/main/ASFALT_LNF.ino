@@ -6,11 +6,17 @@
 
 // ── ToF config ────────────────────────────────────────
 VL53L1X tof;
+<<<<<<< Updated upstream
 
 #define OBSTACLE_MM          200
 #define TOF_TIMING_BUDGET_US 50000UL   // 50 ms in microseconds (VL53L1X API uses µs)
 #define TOF_INTERVAL_MS        50UL    // poll interval — must match budget
 #define OBSTACLE_CONFIRM        4      // consecutive readings needed to trigger
+=======
+#define OBSTACLE_MM          100
+#define TOF_INTERVAL_MS       50   // match the timing budget (50 000 µs = 50 ms)
+#define OBSTACLE_CONFIRM       2
+>>>>>>> Stashed changes
 
 bool     tofOk           = false;
 uint16_t tofDistance     = 9999;
@@ -24,6 +30,13 @@ uint8_t  obstacleCounter = 0;
 #define PIN_S3    8
 #define PIN_COM  A0
 
+<<<<<<< Updated upstream
+=======
+#define STOP_BT 7
+
+#define AVOID_TURN_SPEED 100
+
+>>>>>>> Stashed changes
 MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
 uint8_t digital[MUX_NUM_CHANNELS];
 
@@ -41,8 +54,8 @@ int   baseSpeed          = 255;
 float kp                 = 0.07f;
 float ki                 = 0.0005f;
 float kd                 = 2.8f;
-int   sharpTurnThreshold = 2000;
-int   minTurnSpeed       = 160;
+int   sharpTurnThreshold = 40;
+int   minTurnSpeed       = 80;
 float iClamp             = 800.0f;
 
 // ── PID state ─────────────────────────────────────────
@@ -151,6 +164,7 @@ int getAdaptiveSpeed(int error) {
   return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t);
 }
 
+<<<<<<< Updated upstream
 // ── Non-blocking avoidance state machine ──────────────
 // Call every loop iteration while avoidState != AVOID_IDLE.
 // Returns true when avoidance is complete.
@@ -229,6 +243,45 @@ bool runAvoidance() {
         avoidState = AVOID_DONE;
         break;
       }
+=======
+void avoidObstacle() {
+  Serial.println("Obstacle! Avoiding...");
+   delay(150);
+ setMotors(-150, -150); // backwards
+  delay(350);
+  setMotors(-255, 255); // turn right
+  delay(75);
+  setMotors(0,0);
+  delay(250);
+  setMotors(255,255);
+  delay(600);
+  setMotors(0,0);
+  delay(250);
+  setMotors(255,-255);
+  delay(225);
+  setMotors(0,0);
+  delay(100);
+  setMotors(150,150);
+  delay(425);
+  setMotors(0,0);
+
+  Serial.println("Scanning for line...");
+  uint32_t scanStart = millis();
+  bool found = false;
+  while (millis() - scanStart < 500) {
+    if (lineVisible()) {
+      found = true;
+      break;
+    }
+    setMotors(AVOID_TURN_SPEED, AVOID_TURN_SPEED / 2);
+    delay(20);
+  }
+
+  if (!found) {
+    Serial.println("Line not found, spinning...");
+    scanStart = millis();
+    while (millis() - scanStart < 500) {
+>>>>>>> Stashed changes
       setMotors(AVOID_TURN_SPEED, -AVOID_TURN_SPEED);
       if (now - avoidStateTs >= 1500) {
         // Gave up — stop and mark done; PID will handle recovery
@@ -269,15 +322,27 @@ bool runAvoidance() {
 
 // ── PID step ──────────────────────────────────────────
 void pidStep() {
+
   int position = readPosition();
 
   int error;
   if (position < 0) {
+<<<<<<< Updated upstream
     // Line lost — steer based on the last known direction so we turn back
     error = lastValidError;
   } else {
     error          = position - POSITION_CENTER;
     lastValidError = error;
+=======
+    setMotors(100, 255);
+    return;
+ }
+
+  int error = position - 7500;
+
+  if (abs(error) < abs(last_error)) {
+    integral *= 0.85f;
+>>>>>>> Stashed changes
   }
 
   // Anti-windup: clamp only; don't apply a decay multiplier that fights Ki
@@ -302,6 +367,7 @@ void setup() {
   pinMode(RIGHT_A,     OUTPUT);
   pinMode(RIGHT_B,     OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(STOP_BT,     INPUT_PULLUP);
 
   // I²C must be started and clock set before any device init
   Wire.begin();
@@ -334,6 +400,7 @@ void setup() {
 // ── Loop ──────────────────────────────────────────────
 void loop() {
   bool fresh = updateToF();
+<<<<<<< Updated upstream
 
   if (avoidState != AVOID_IDLE) {
     // Already avoiding — keep running the state machine
@@ -348,6 +415,20 @@ void loop() {
     avoidState   = AVOID_BACK;
     avoidStateTs = millis();
     return;
+=======
+  if (digitalRead(STOP_BT) == LOW) {
+    stop();
+    Serial.print("pressed");
+    while (true);
+  }
+
+  if (obstacleDetected(fresh)) {
+   stop();
+   delay(250);
+   avoidObstacle();
+  } else {
+    pidStep();
+>>>>>>> Stashed changes
   }
 
   pidStep();
