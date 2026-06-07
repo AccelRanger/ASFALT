@@ -6,9 +6,9 @@
 
 // ToF config
 VL53L1X tof;
-#define OBSTACLE_MM          100
-#define TOF_INTERVAL_MS       50   // match the timing budget (50 000 µs = 50 ms)
-#define OBSTACLE_CONFIRM       2
+#define OBSTACLE_MM          180
+#define TOF_INTERVAL_MS       35   // match the timing budget (50 000 µs = 50 ms)
+#define OBSTACLE_CONFIRM       1
 
 bool     tofOk           = false;
 uint16_t tofDistance     = 9999;
@@ -36,7 +36,7 @@ uint8_t digital[MUX_NUM_CHANNELS];
 #define RIGHT_B   3
 
 // PID config
-int   baseSpeed          = 255;
+int   baseSpeed          = 150;
 float kp                 = 0.07f;
 float ki                 = 0.0005f;
 float kd                 = 2.8f;
@@ -44,8 +44,10 @@ int   sharpTurnThreshold = 40;
 int   minTurnSpeed       = 80;
 float iClamp             = 800.0f;
 
-int leftLost = 70;
+int leftLost = 255;
 int rightLost = 255;
+
+int avoidedCNT = 0;
 
 // PID state
 int   last_error = 0;
@@ -131,10 +133,28 @@ int getAdaptiveSpeed(int error) {
 
 void avoidObstacle() {
   Serial.println("Obstacle! Avoiding...");
-   delay(150);
- setMotors(-150, -150); // backwards
-  delay(350);
-  setMotors(-255, 255); // turn right
+  avoidedCNT += 1;
+  if (avoidedCNT == 1) {
+  setMotors(-255, -255); // backwards
+  delay(300);
+  setMotors(255, -255); // turn right
+  delay(75);
+  setMotors(0,0);
+  delay(250);
+  setMotors(255,255);
+  delay(750);
+  setMotors(-255, 255); // turn left
+  delay(150);
+  setMotors(0,0);
+  delay(250);
+  setMotors(255, -255); // turn right
+  delay(80);
+  setMotors(0,0);
+  } else {
+  delay(150);
+  setMotors(-150, -150); // backwards
+  delay(400);
+  setMotors(255, -255); // turn right
   delay(75);
   setMotors(0,0);
   delay(250);
@@ -142,13 +162,14 @@ void avoidObstacle() {
   delay(600);
   setMotors(0,0);
   delay(250);
-  setMotors(255,-255);
+  setMotors(-255,255);
   delay(225);
   setMotors(0,0);
   delay(100);
   setMotors(150,150);
   delay(425);
   setMotors(0,0);
+  }
 
   Serial.println("Scanning for line...");
   uint32_t scanStart = millis();
@@ -180,6 +201,8 @@ void avoidObstacle() {
   integral       = 0.0f;
   obstacleCounter = 0;
 
+  tof.stopContinuous();
+  delay(5);  // brief settle
   tof.startContinuous(TOF_INTERVAL_MS);
   Serial.println("Avoidance done, resuming line follow.");
 }
@@ -250,10 +273,10 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────
 void loop() {
- // if (millis() >= 25000) {
- //   leftLost = 200;
- //   rightLost = 200;
- // }
+  if (millis() >= 24500) {
+    leftLost = -255;
+    rightLost = 255;
+  }
 
   bool fresh = updateToF();
   if (digitalRead(STOP_BT) == LOW) {
@@ -264,7 +287,6 @@ void loop() {
 
   if (obstacleDetected(fresh)) {
     stop();
-    delay(250);
     avoidObstacle();
   } else {
     pidStep();
