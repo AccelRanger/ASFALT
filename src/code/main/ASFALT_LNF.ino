@@ -44,6 +44,9 @@ int   sharpTurnThreshold = 40;
 int   minTurnSpeed       = 80;
 float iClamp             = 800.0f;
 
+int leftLost = 70;
+int rightLost = 255;
+
 // PID state
 int   last_error = 0;
 float integral   = 0.0f;
@@ -186,7 +189,7 @@ void pidStep() {
 
   int position = readPosition();
   if (position < 0) {
-    setMotors(100, 255);
+    setMotors(leftLost, rightLost);
     return;
  }
 
@@ -247,6 +250,11 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────
 void loop() {
+ // if (millis() >= 25000) {
+ //   leftLost = 200;
+ //   rightLost = 200;
+ // }
+
   bool fresh = updateToF();
   if (digitalRead(STOP_BT) == LOW) {
     stop();
@@ -255,9 +263,9 @@ void loop() {
   }
 
   if (obstacleDetected(fresh)) {
-   stop();
-   delay(250);
-   avoidObstacle();
+    stop();
+    delay(250);
+    avoidObstacle();
   } else {
     pidStep();
   }
