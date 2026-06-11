@@ -253,7 +253,7 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────
 void loop() {
-  if (millis() >= 35000) {
+  if (millis() >= 30000) {
    leftLost = 255;
    rightLost = 100;
    digitalWrite(LED_BUILTIN, HIGH);
