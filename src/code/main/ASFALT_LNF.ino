@@ -251,15 +251,15 @@ void setup() {
   delay(1000);
 }
 
-// ── Loop ──────────────────────────────────────────────
+// loop
 void loop() {
   bool fresh = updateToF();
   
-  if (digitalRead(STOP_BT) == LOW) {
-    stop();
-    Serial.print("pressed");
-    while (true);
-  }
+  //if (digitalRead(STOP_BT) == LOW) {
+  //  stop();
+  //  Serial.print("pressed");
+  //  while (true);
+  //}
 
   if (obstacleDetected(fresh)) {
     stop();
