@@ -253,13 +253,8 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────
 void loop() {
-  if (millis() >= 35000) {
-   leftLost = 255;
-   rightLost = 100;
-   digitalWrite(LED_BUILTIN, HIGH);
-  }
-
   bool fresh = updateToF();
+  
   if (digitalRead(STOP_BT) == LOW) {
     stop();
     Serial.print("pressed");
