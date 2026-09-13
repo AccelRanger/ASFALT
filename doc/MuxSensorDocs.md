@@ -7,7 +7,6 @@ Custom Library for reading sensor inputs from 16CMIRSA
 ## Table of contents
 
 - [Overview](#overview)
-- [Installation](#installation)
 - [Constants](#constants)
 - [Enums](#enums)
 - [Constructor](#constructor)
