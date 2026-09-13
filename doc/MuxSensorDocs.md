@@ -29,16 +29,6 @@ Designed for **line-following robots** where a bank of IR sensors (e.g. TCRT5000
 
 ---
 
-## Installation
-
-Copy `MuxSensor.h` and `MuxSensor.cpp` into your sketch folder or Arduino libraries directory, then include the header:
-
-```cpp
-#include "MuxSensor.h"
-```
-
----
-
 ## Constants
 
 | Macro | Value | Description |
