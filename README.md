@@ -12,4 +12,4 @@ This project is open source. Hardware designs, firmware, and mechanical files ar
 ---
 
 *ASFALT — Accel Systems Line Following Robot*
-*old version new one coming
+*ASFALT-REV2 > Updated version single PCB, This repo has support till 1/10/2026
