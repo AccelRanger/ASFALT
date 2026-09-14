@@ -21,9 +21,9 @@ uint8_t digital[MUX_NUM_CHANNELS];
 #define FOLLOW_RIGHT_EDGE   1    // 1 = RIGHT; 0 = LEFT
 
 #if FOLLOW_RIGHT_EDGE
-  int edgeSetpoint = 12000;   // roughly half the right-hand sensors on black
+  int edgeSetpoint = 12000;
 #else
-  int edgeSetpoint = 3000;    // roughly half the left-hand sensors on black
+  int edgeSetpoint = 3000;
 #endif
 
 #define LOST_ERROR_MAG 7500
