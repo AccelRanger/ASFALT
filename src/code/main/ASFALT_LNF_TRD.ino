@@ -9,8 +9,6 @@
 #define PIN_S3    8
 #define PIN_COM  A0
 
-#define STOP_BT 7
-
 MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
 uint8_t digital[MUX_NUM_CHANNELS];
 
@@ -141,11 +139,5 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────
 void loop() {
-  //if (digitalRead(STOP_BT) == LOW) {
-  //  stop();
-  //  Serial.print("pressed");
-  //  while (true);
-  //}
-
   pidStep();
 }
