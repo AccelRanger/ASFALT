@@ -1,5 +1,4 @@
 // AccelRanger
-
 #include "MuxSensor.h"
 
 // line sensor pins
@@ -8,6 +7,8 @@
 #define PIN_S2   10
 #define PIN_S3    8
 #define PIN_COM  A0
+
+// #define STOP_BT 7
 
 MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
 uint8_t digital[MUX_NUM_CHANNELS];
@@ -18,15 +19,22 @@ uint8_t digital[MUX_NUM_CHANNELS];
 #define RIGHT_A   5
 #define RIGHT_B   3
 
-#define FOLLOW_RIGHT_EDGE   1    // 1 = RIGHT; 0 = LEFT
+#define EDGE_LEFT   0
+#define EDGE_RIGHT  1
+#define EDGE_SIDE   EDGE_LEFT     // EDGE_LEFT/EDGER_RIGHT
 
-#if FOLLOW_RIGHT_EDGE
-  int edgeSetpoint = 12000;
+#if EDGE_SIDE == EDGE_LEFT
+  const uint8_t edgeChannels[] = {0, 1, 2, 3};
 #else
-  int edgeSetpoint = 3000;
+  const uint8_t edgeChannels[] = {12, 13, 14, 15};
 #endif
+const uint8_t edgeChannelCount = sizeof(edgeChannels) / sizeof(edgeChannels[0]);
 
-#define LOST_ERROR_MAG 7500
+// (index * 1000). 4 channels 0-3000
+#define EDGE_SETPOINT      500     // tune here?
+#define EDGE_MIN_SIGNAL    150     // lost here?
+
+int avoidedCNT = 0; // placeholder
 
 // PID config
 int   baseSpeed          = 160;
@@ -37,11 +45,15 @@ int   sharpTurnThreshold = 40;
 int   minTurnSpeed       = 80;
 float iClamp             = 800.0f;
 
-// PID state
+// recovery ( my beloved save me )
+int leftLost  = 130;
+int rightLost = 255;
+
+// pid stuff
 int   last_error = 0;
 float integral   = 0.0f;
 
-// ── Motor helpers ─────────────────────────────────────
+// motor helper 
 void setMotors(int left, int right) {
   left  = constrain(left,  -255, 255);
   right = constrain(right, -255, 255);
@@ -52,51 +64,62 @@ void setMotors(int left, int right) {
 }
 void stop() { setMotors(0, 0); }
 
-int readPosition() {
+bool lineVisible() { // pls work
   sensor.getDigital(digital);
-  long weightedSum = 0;
-  int  activeCount = 0;
   for (uint8_t i = 0; i < MUX_NUM_CHANNELS; i++) {
-    if (digital[i]) {
-      weightedSum += (long)i * 1000;
-      activeCount++;
-    }
+    if (digital[i]) return true;
   }
-  if (activeCount == 0)               return -1;
-  if (activeCount == MUX_NUM_CHANNELS) return -2;
-  return (int)(weightedSum / activeCount);
+  return false;
+}
+
+int readEdgePosition() {
+  uint16_t raw[MUX_NUM_CHANNELS];
+  sensor.getRawAnalogValues(raw);
+
+  long weightedSum  = 0;
+  long weightTotal  = 0;
+
+  for (uint8_t i = 0; i < edgeChannelCount; i++) {
+    uint8_t ch = edgeChannels[i];
+
+    uint16_t calMin = sensor.getCalibMin(ch);
+    uint16_t calMax = sensor.getCalibMax(ch);
+    if (calMax <= calMin) continue; // uncalibrated
+
+    int norm = map(raw[ch], calMin, calMax, 0, 1000);
+    norm = constrain(norm, 0, 1000);
+
+    int blackness = 1000 - norm;
+
+    weightedSum += (long)blackness * ((long)i * 1000);
+    weightTotal += blackness;
+  }
+
+  if (weightTotal < EDGE_MIN_SIGNAL) return -1; // lost
+  return (int)(weightedSum / weightTotal);
 }
 
 // ── Adaptive speed ────────────────────────────────────
 int getAdaptiveSpeed(int error) {
   int absError = abs(error);
   if (absError <= sharpTurnThreshold) return baseSpeed;
-  float t = (float)(absError - sharpTurnThreshold) / (LOST_ERROR_MAG - sharpTurnThreshold);
+  float t = (float)(absError - sharpTurnThreshold) / (3000 - sharpTurnThreshold);
   t = constrain(t, 0.0f, 1.0f);
   return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t);
 }
 
-// ── PID step (edge-following) ────────────────────────
+// ── PID step (edge-follow) ────────────────────────────
 void pidStep() {
-  int position = readPosition();
-  int error;
+  int position = readEdgePosition();
 
-  if (position == -1) {
-    #if FOLLOW_RIGHT_EDGE
-      error = LOST_ERROR_MAG;
-    #else
-      error = -LOST_ERROR_MAG;
-    #endif
-  } else if (position == -2) {
-
-    #if FOLLOW_RIGHT_EDGE
-      error = -LOST_ERROR_MAG;
-    #else
-      error = LOST_ERROR_MAG;
-    #endif
-  } else {
-    error = position - edgeSetpoint;
+  if (position < 0) {
+    // Edge lost: fall back to a gentle recovery turn.
+    // NOTE: direction may need flipping depending on EDGE_SIDE once tested.
+    setMotors(leftLost, rightLost);
+    return;
   }
+
+  int error = position - EDGE_SETPOINT;
 
   if (abs(error) < abs(last_error)) {
     integral *= 0.85f;
@@ -123,7 +146,7 @@ void setup() {
   pinMode(RIGHT_A,     OUTPUT);
   pinMode(RIGHT_B,     OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(STOP_BT,     INPUT_PULLUP);
+  // pinMode(STOP_BT,     INPUT_PULLUP);   // -- disabled for now --
 
   sensor.begin();
   stop();
@@ -137,7 +160,13 @@ void setup() {
   delay(1000);
 }
 
-// ── Loop ──────────────────────────────────────────────
+// loop
 void loop() {
+  // if (digitalRead(STOP_BT) == LOW) {
+  //   stop();
+  //   Serial.print("pressed");
+  //   while (true);
+  // }
+
   pidStep();
 }
