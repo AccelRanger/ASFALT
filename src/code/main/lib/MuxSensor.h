@@ -2,12 +2,12 @@
 #include <Arduino.h>
 
 #define MUX_NUM_CHANNELS  16
-#define MUX_CALIB_MARGIN  30    // ± ADC counts around each calibrated extreme
-#define MUX_SETTLE_US     200   // µs to settle after switching MUX channel
+#define MUX_CALIB_MARGIN  30    // +- ADC wierd
+#define MUX_SETTLE_US     200   // MUX wierd (200ms might be good)
 
 enum MuxPolarity {
-  POLARITY_DARK_LOW,    // black → LOW  reading  (typical TCRT5000)
-  POLARITY_DARK_HIGH    // black → HIGH reading
+  POLARITY_DARK_LOW,
+  POLARITY_DARK_HIGH
 };
 
 class MuxSensor {

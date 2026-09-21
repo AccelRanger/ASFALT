@@ -251,7 +251,7 @@ void setup() {
   delay(1000);
 }
 
-// ── Loop ──────────────────────────────────────────────
+// loop
 void loop() {
   bool fresh = updateToF();
   

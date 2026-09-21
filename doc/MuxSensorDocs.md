@@ -7,7 +7,6 @@ Custom Library for reading sensor inputs from 16CMIRSA
 ## Table of contents
 
 - [Overview](#overview)
-- [Installation](#installation)
 - [Constants](#constants)
 - [Enums](#enums)
 - [Constructor](#constructor)
@@ -26,16 +25,6 @@ Custom Library for reading sensor inputs from 16CMIRSA
 `MuxSensor` controls a 16-to-1 analog multiplexer using four digital select lines (S0–S3) and one analog input (COM). It reads each of the 16 channels in sequence, runs a live calibration pass to record each sensor's min/max ADC extremes, and converts raw 10-bit ADC values to digital 0/1 signals using per-channel hysteresis windows.
 
 Designed for **line-following robots** where a bank of IR sensors (e.g. TCRT5000) feeds a single ADC pin through a mux.
-
----
-
-## Installation
-
-Copy `MuxSensor.h` and `MuxSensor.cpp` into your sketch folder or Arduino libraries directory, then include the header:
-
-```cpp
-#include "MuxSensor.h"
-```
 
 ---
 

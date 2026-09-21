@@ -3,7 +3,7 @@
 
 A high-resolution line follower built on an Arduino Nano (ATmega328P), featuring a 16-sensor U-shaped IR array, custom KiCad PCBs, 3D-printed chassis parts, and a PID/proportional control algorithm with priority-based corner handling.
 
-![Robot view](doc/robotFull.jpg "Robot View")
+![Robot view](doc/robotFullNew.jpg "Robot View")
 
 ## License
 
@@ -12,4 +12,4 @@ This project is open source. Hardware designs, firmware, and mechanical files ar
 ---
 
 *ASFALT — Accel Systems Line Following Robot*
-*old version new one coming
+*ASFALT-REV2 > Updated version single PCB, This repo has support till 1/10/2026
