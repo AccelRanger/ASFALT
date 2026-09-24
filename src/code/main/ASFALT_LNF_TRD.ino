@@ -12,7 +12,7 @@ void pidStep();
 void setup();
 void loop();
 
-// ── line sensor pins ──────────────────────────────────
+// line sensor
 #define PIN_S0   12
 #define PIN_S1   11
 #define PIN_S2   10
@@ -24,7 +24,7 @@ void loop();
 MuxSensor sensor(PIN_S0, PIN_S1, PIN_S2, PIN_S3, PIN_COM, POLARITY_DARK_LOW);
 uint8_t digital[MUX_NUM_CHANNELS];
 
-// ── motor pins ────────────────────────────────────────
+// motor pins
 #define LEFT_A    6
 #define LEFT_B    9
 #define RIGHT_A   5
@@ -37,7 +37,7 @@ bool followLeftEdge = true;
 
 #define N_SENS      16                  // array size
 #define POS_MAX     ((N_SENS - 1) * 1000)   // 15000
-#define EDGE_TARGET 8000                // where we want the boundary to sit
+#define EDGE_TARGET 8000                // boundary sensor
 #define ERROR_MAX   8000
 
 // 1.0 = no filtering, 0.2 = heavy. wobble fixing
@@ -47,7 +47,7 @@ float   edgeFilt  = (float)EDGE_TARGET;
 int     lastEdge  = EDGE_TARGET;
 uint8_t darkCount = 0;
 
-// ── PID config ────────────────────────────────────────
+// PID config
 int   baseSpeed          = 160;
 float kp                 = 0.07f;
 float ki                 = 0.0005f;
@@ -56,11 +56,11 @@ int   sharpTurnThreshold = 40;
 int   minTurnSpeed       = 80;
 float iClamp             = 800.0f;
 
-int rightLossSpeed  = 90;    // reduced forward speed while searching
-int rightLossTurn   = 40;    // how hard to bias right (bigger = tighter turn)
+int rightLossSpeed  = 90;
+int rightLossTurn   = 40;
 
-int leftLossSpeed  = 90;     // reduced forward speed while searching
-int leftLossTurn   = 40;     // how hard to bias left (bigger = tighter turn)
+int leftLossSpeed  = 90;
+int leftLossTurn   = 40;
 
 // ── PID state ─────────────────────────────────────────
 int   last_error = 0;
@@ -91,8 +91,8 @@ int findEdge() {
   long bestDist = 0x7FFFFFFF;
 
   for (uint8_t i = 0; i + 1 < N_SENS; i++) {
-    bool isEdge = followLeftEdge ? (!digital[i] &&  digital[i + 1])   // white → black
-                                 : ( digital[i] && !digital[i + 1]);  // black → white
+    bool isEdge = followLeftEdge ? (!digital[i] &&  digital[i + 1])   // white > black
+                                 : ( digital[i] && !digital[i + 1]);  // black > white
     if (!isEdge) continue;
 
     int  pos = (int)i * 1000 + 500;
@@ -123,7 +123,7 @@ void detectEdgeSide() {
     return;
   }
 
-  followLeftEdge = (rightWeight * 2 > totalDark);   // majority of dark on the right
+  followLeftEdge = (rightWeight * 2 > totalDark);   // a lot of black
   Serial.print("Auto-detect: black is on the ");
   Serial.print(followLeftEdge ? "RIGHT" : "LEFT");
   Serial.print(" -> following ");
@@ -131,7 +131,7 @@ void detectEdgeSide() {
   Serial.println(" edge.");
 }
 
-// ── Switch sides cleanly (resets control state) ───────
+// side switching
 void setEdgeSide(bool left) {
   followLeftEdge = left;
   lastEdge   = EDGE_TARGET;
@@ -143,7 +143,7 @@ void setEdgeSide(bool left) {
   Serial.println(" edge of the black area.");
 }
 
-// ── Serial commands: 'l' / 'r' to switch live ─────────
+// yay useless serial stuff but why not
 void handleSerial() {
   while (Serial.available()) {
     char c = Serial.read();
@@ -152,7 +152,7 @@ void handleSerial() {
   }
 }
 
-// ── Adaptive speed ────────────────────────────────────
+// adaptive speed
 int getAdaptiveSpeed(int error) {
   int absError = abs(error);
   if (absError <= sharpTurnThreshold) return baseSpeed;
@@ -161,7 +161,7 @@ int getAdaptiveSpeed(int error) {
   return (int)(baseSpeed - (baseSpeed - minTurnSpeed) * t);
 }
 
-// ── Recovery when the edge leaves the array ───────────
+// recovery
 void recover() {
   if (!followLeftEdge) {
     setMotors(rightLossSpeed, rightLossSpeed - rightLossTurn);
@@ -171,7 +171,7 @@ void recover() {
   setMotors(leftLossSpeed - leftLossTurn, leftLossSpeed);
 }
 
-// ── PID step ──────────────────────────────────────────
+// PID trouble
 void pidStep() {
   int e = findEdge();
 
@@ -203,7 +203,7 @@ void pidStep() {
   last_error = error;
 }
 
-// ── Setup ─────────────────────────────────────────────
+// setup
 void setup() {
   Serial.begin(9600);
 
@@ -225,7 +225,7 @@ void setup() {
 
   followLeftEdge = DEFAULT_FOLLOW_LEFT_EDGE;
 #if AUTO_DETECT_SIDE
-  // Place the robot straddling the edge before this runs.
+  // side detection!! 
   detectEdgeSide();
 #endif
 
@@ -236,7 +236,7 @@ void setup() {
   delay(1000);
 }
 
-// ── Loop ──────────────────────────────────────────────
+// loop
 void loop() {
   handleSerial();
 
