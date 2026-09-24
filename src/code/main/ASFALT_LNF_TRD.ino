@@ -1,18 +1,5 @@
-// AccelRanger — EDGE FOLLOWING version (16-channel, digital-only sensor)
-// Follows the black/white boundary and holds it at EDGE_TARGET (8000).
-// The edge side (black left / black right) is switchable at runtime.
-// ToF obstacle detection/avoidance removed — line following + calibration only.
-//
-// .cpp build notes (not needed for the .ino):
-//   - <Arduino.h> must be included explicitly; the IDE adds it only for .ino files.
-//   - Function prototypes are declared below; the IDE normally generates these.
-//   - Keep this file in the sketch folder alongside MuxSensor.h, or add it to
-//     your PlatformIO src/ directory.
-
-#include <Arduino.h>
 #include "MuxSensor.h"
 
-// ── forward declarations ──────────────────────────────
 void setMotors(int left, int right);
 void stop();
 int  findEdge();
@@ -43,30 +30,17 @@ uint8_t digital[MUX_NUM_CHANNELS];
 #define RIGHT_A   5
 #define RIGHT_B   3
 
-// ══════════════════════════════════════════════════════
-//  EDGE FOLLOWING CONFIG
-// ══════════════════════════════════════════════════════
-// followLeftEdge == true  → track the LEFT edge of the black area
-//                           (the black band lies to the RIGHT of the array)
-// followLeftEdge == false → track the RIGHT edge of the black area
-//                           (the black band lies to the LEFT of the array)
-//
-// Set three ways:
-//   1. DEFAULT_FOLLOW_LEFT_EDGE below (used if auto-detect is off or fails)
-//   2. AUTO_DETECT_SIDE at startup — place the robot on the edge, it decides
-//   3. Serial: send 'l' or 'r' at any time to switch sides live
 bool followLeftEdge = true;
 
 #define DEFAULT_FOLLOW_LEFT_EDGE  true
 #define AUTO_DETECT_SIDE          1     // 0 = always use the default above
 
-#define N_SENS      16                  // your array size
+#define N_SENS      16                  // array size
 #define POS_MAX     ((N_SENS - 1) * 1000)   // 15000
 #define EDGE_TARGET 8000                // where we want the boundary to sit
-#define ERROR_MAX   8000                // largest |error| we expect
+#define ERROR_MAX   8000
 
-// Smoothing of the coarse digital edge position.
-// 1.0 = no filtering, 0.2 = heavy. Lower this first if the robot wobbles.
+// 1.0 = no filtering, 0.2 = heavy. wobble fixing
 #define EDGE_ALPHA  0.45f
 
 float   edgeFilt  = (float)EDGE_TARGET;
@@ -82,9 +56,11 @@ int   sharpTurnThreshold = 40;
 int   minTurnSpeed       = 80;
 float iClamp             = 800.0f;
 
-// Recovery speeds when no edge is visible
-int recoverOuter = 150;   // wheel on the outside of the recovery turn
-int recoverInner = -60;   // wheel on the inside (negative = pivot)
+int rightLossSpeed  = 90;    // reduced forward speed while searching
+int rightLossTurn   = 40;    // how hard to bias right (bigger = tighter turn)
+
+int leftLossSpeed  = 90;     // reduced forward speed while searching
+int leftLossTurn   = 40;     // how hard to bias left (bigger = tighter turn)
 
 // ── PID state ─────────────────────────────────────────
 int   last_error = 0;
@@ -101,14 +77,6 @@ void setMotors(int left, int right) {
 }
 void stop() { setMotors(0, 0); }
 
-// ══════════════════════════════════════════════════════
-//  EDGE DETECTION
-//  Returns the boundary position on the same 0..15000 scale,
-//  or -1 if no edge of the tracked polarity is in view.
-//  A boundary between sensor i and i+1 sits at i*1000 + 500.
-//  When several candidate edges exist (junctions, the band
-//  curling back on itself), the one nearest the previous edge wins.
-// ══════════════════════════════════════════════════════
 int findEdge() {
   sensor.getDigital(digital);
 
@@ -134,9 +102,6 @@ int findEdge() {
   return best;
 }
 
-// ── Auto-detect which side the black area is on ───────
-// Averages several samples; if the dark sensors sit mostly on the right
-// half of the array, the band is on the right → follow its left edge.
 void detectEdgeSide() {
   long rightWeight = 0;
   long totalDark   = 0;
@@ -198,17 +163,12 @@ int getAdaptiveSpeed(int error) {
 
 // ── Recovery when the edge leaves the array ───────────
 void recover() {
-  // darkCount was refreshed by findEdge()
-  bool allWhite = (darkCount == 0);
+  if (!followLeftEdge) {
+    setMotors(rightLossSpeed, rightLossSpeed - rightLossTurn);
+    return;
+  }
 
-  // Following the left edge: black lives on the right.
-  //   all white → band drifted off right  → turn right
-  //   all black → we drove into the band  → turn left
-  // Mirrored when following the right edge.
-  bool turnRight = followLeftEdge ? allWhite : !allWhite;
-
-  if (turnRight) setMotors(recoverOuter, recoverInner);
-  else           setMotors(recoverInner, recoverOuter);
+  setMotors(leftLossSpeed - leftLossTurn, leftLossSpeed);
 }
 
 // ── PID step ──────────────────────────────────────────
@@ -225,9 +185,6 @@ void pidStep() {
 
   int error = (int)edgeFilt - EDGE_TARGET;
 
-  // The sign of the correction flips with the edge side: on the left edge,
-  // a boundary too far right means steer right; on the right edge it is the
-  // opposite, because the black area is on the other side of the array.
   if (!followLeftEdge) error = -error;
 
   if (abs(error) < abs(last_error)) {
